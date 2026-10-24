@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f5f5f7;
+  --foreground: #1d1d1f;
+  --muted: #6e6e73;
+  --card: rgba(255, 255, 255, 0.7);
+  --card-border: rgba(0, 0, 0, 0.08);
+  --input: rgba(0, 0, 0, 0.03);
+  --input-border: rgba(0, 0, 0, 0.14);
+  --accent: #0071e3;
+  --accent-hover: #0077ed;
+  --active: rgba(0, 0, 0, 0.03);
+  --ring: rgba(0, 113, 227, 0.35);
+  --shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.14);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-card: var(--card);
+  --color-card-border: var(--card-border);
+  --color-input: var(--input);
+  --color-input-border: var(--input-border);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-active: var(--active);
+  --color-ring: var(--ring);
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter",
+    "Segoe UI", sans-serif;
+  --shadow-card: var(--shadow);
+  --animate-appear: appear 0.45s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+
+  @keyframes appear {
+    from {
+      opacity: 0;
+      transform: scale(0.97) translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0b0b0d;
+    --foreground: #f5f5f7;
+    --muted: #86868b;
+    --card: rgba(28, 28, 30, 0.72);
+    --card-border: rgba(255, 255, 255, 0.12);
+    --input: rgba(255, 255, 255, 0.06);
+    --input-border: rgba(255, 255, 255, 0.16);
+    --active: rgba(255, 255, 255, 0.08);
+    --shadow: 0 24px 60px -12px rgba(0, 0, 0, 0.55);
+  }
+}
+
+html {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: -0.022em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-appear {
+    animation: none;
+  }
+}
