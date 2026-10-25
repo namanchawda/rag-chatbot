@@ -68,6 +68,17 @@ function extractErrorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+export type DocumentStatus = "processing" | "ready" | "failed";
+
+export type DocumentItem = {
+  id: string;
+  filename: string;
+  status: DocumentStatus;
+  chunk_count: number;
+  error: string | null;
+  created_at: string;
+};
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -77,16 +88,21 @@ export async function apiRequest<T>(
   } = {},
 ): Promise<T> {
   const { method = "GET", body, token } = options;
+  const isFormData = body instanceof FormData;
 
   let response: Response;
   try {
     response = await fetch(`${API_URL}${path}`, {
       method,
       headers: {
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(body !== undefined && !isFormData
+          ? { "Content-Type": "application/json" }
+          : {}),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      ...(body !== undefined
+        ? { body: isFormData ? body : JSON.stringify(body) }
+        : {}),
     });
   } catch {
     throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
@@ -129,4 +145,31 @@ export function signup(email: string, password: string): Promise<AuthResponse> {
 
 export function getMe(token: string): Promise<User> {
   return apiRequest<User>("/auth/me", { token });
+}
+
+export function listDocuments(token: string): Promise<DocumentItem[]> {
+  return apiRequest<DocumentItem[]>("/documents", { token });
+}
+
+export function uploadDocument(
+  token: string,
+  file: File,
+): Promise<DocumentItem> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiRequest<DocumentItem>("/documents", {
+    method: "POST",
+    body: formData,
+    token,
+  });
+}
+
+export function deleteDocument(
+  token: string,
+  documentId: string,
+): Promise<null> {
+  return apiRequest<null>(`/documents/${documentId}`, {
+    method: "DELETE",
+    token,
+  });
 }

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import { Field, GlassCard, PrimaryButton, Splash } from "@/components/ui";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 type Mode = "signin" | "create";
 
@@ -82,7 +83,8 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-4">
+    <main className="relative flex min-h-screen items-center justify-center bg-background px-4">
+      <ThemeToggle className="absolute right-4 top-4 md:right-6 md:top-6" />
       <div className="animate-appear w-full max-w-sm">
         <GlassCard className="p-8">
           <div className="mb-8 text-center">

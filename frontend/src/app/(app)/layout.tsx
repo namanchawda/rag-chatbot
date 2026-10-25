@@ -1,19 +1,29 @@
 "use client";
 
-import { useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, type ReactNode } from "react";
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { Splash } from "@/components/ui";
+import { ThemeToggle } from "@/components/theme-toggle";
 
-const COMING_SOON = [
-  { label: "Documents", note: "Coming soon" },
+type NavItem = {
+  label: string;
+  href?: string;
+  note?: string;
+};
+
+const NAV_ITEMS: NavItem[] = [
+  { label: "Dashboard", href: "/dashboard" },
+  { label: "Documents", href: "/documents" },
   { label: "Chat", note: "Coming soon" },
   { label: "Database", note: "Coming soon" },
 ];
 
-export default function DashboardPage() {
+export default function AppLayout({ children }: { children: ReactNode }) {
   const { status, user, signOut } = useAuth();
   const router = useRouter();
+  const pathname = usePathname();
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -47,6 +57,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-muted">{user?.email}</span>
+            <ThemeToggle />
             <button
               type="button"
               onClick={handleSignOut}
@@ -61,34 +72,44 @@ export default function DashboardPage() {
       <div className="flex flex-1">
         <aside className="hidden w-60 shrink-0 border-r border-card-border md:block">
           <nav aria-label="Main" className="flex flex-col gap-1 p-4">
-            {COMING_SOON.map((item) => (
-              <div
-                key={item.label}
-                aria-disabled="true"
-                className="flex items-center justify-between rounded-xl px-3 py-2.5 opacity-50"
-              >
-                <span className="text-sm font-medium text-foreground">
+            {NAV_ITEMS.map((item) => {
+              if (!item.href) {
+                return (
+                  <div
+                    key={item.label}
+                    aria-disabled="true"
+                    className="flex items-center justify-between rounded-xl px-3 py-2.5 opacity-50"
+                  >
+                    <span className="text-sm font-medium text-foreground">
+                      {item.label}
+                    </span>
+                    <span className="rounded-full bg-active px-2 py-0.5 text-[11px] font-medium text-muted">
+                      {item.note}
+                    </span>
+                  </div>
+                );
+              }
+
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`flex items-center rounded-xl px-3 py-2.5 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                    isActive
+                      ? "bg-active text-foreground"
+                      : "text-muted hover:bg-active hover:text-foreground"
+                  }`}
+                >
                   {item.label}
-                </span>
-                <span className="rounded-full bg-active px-2 py-0.5 text-[11px] font-medium text-muted">
-                  {item.note}
-                </span>
-              </div>
-            ))}
+                </Link>
+              );
+            })}
           </nav>
         </aside>
 
-        <main className="flex flex-1 items-center justify-center p-10">
-          <div className="animate-appear max-w-md text-center">
-            <h1 className="text-3xl font-semibold text-foreground">
-              Welcome{user?.email ? `, ${user.email}` : ""} ✦
-            </h1>
-            <p className="mt-4 text-lg leading-8 text-muted">
-              Your workspace is ready. Documents, chat, and database features
-              are on their way — sign-in is all warmed up.
-            </p>
-          </div>
-        </main>
+        {children}
       </div>
     </div>
   );
