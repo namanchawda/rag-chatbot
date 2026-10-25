@@ -5,11 +5,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db import create_tables
-from .routers import auth
+from .rag.ingest import ensure_pgvector
+from .routers import auth, documents
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    ensure_pgvector()
     create_tables()
     yield
 
@@ -25,6 +27,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     api.include_router(auth.router)
+    api.include_router(documents.router)
 
     @api.get("/health")
     def health() -> dict[str, str]:
