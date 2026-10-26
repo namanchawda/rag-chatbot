@@ -8,6 +8,7 @@ and the LLM is a recording fake.
 import json
 import logging
 import uuid
+from contextlib import contextmanager
 from typing import ClassVar
 
 import httpx
@@ -33,6 +34,31 @@ from app.routers import chat as chat_router
 
 USER_A = uuid.UUID(int=1)
 USER_A_STR = str(USER_A)
+
+
+class _CaptureHandler(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@contextmanager
+def capture_retrieve_logs(level: int = logging.INFO):
+    """Capture app.rag.retrieve records directly; pytest caplog captures at
+    the root logger, which the app logger no longer propagates to."""
+    logger = logging.getLogger("app.rag.retrieve")
+    handler = _CaptureHandler()
+    old_level = logger.level
+    logger.setLevel(level)
+    logger.addHandler(handler)
+    try:
+        yield handler.records
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(old_level)
 
 
 class FakeChatLLM(BaseChatModel):
@@ -378,7 +404,7 @@ class TestRerankedRetrieval:
 
 class TestScoreLogging:
     def test_logs_truncated_question_and_index_score_pairs(
-        self, monkeypatch, caplog
+        self, monkeypatch
     ):
         store = UserFilteredStore(ALL_CANDIDATES)
         enable_rerank(monkeypatch, RERANK_LOG_SCORES=True)
@@ -386,18 +412,18 @@ class TestScoreLogging:
             results=[(2, 0.14), (0, 0.11), (1, 0.03), (3, -0.17)]
         )
 
-        with caplog.at_level(logging.INFO, logger="app.rag.retrieve"):
+        with capture_retrieve_logs() as records:
             retrieve_reranked_chunks(
                 "cats", USER_A, store=store, reranker=reranker
             )
 
-        records = [
+        score_records = [
             record
-            for record in caplog.records
+            for record in records
             if "Rerank scores" in record.getMessage()
         ]
-        assert len(records) == 1
-        message = records[0].getMessage()
+        assert len(score_records) == 1
+        message = score_records[0].getMessage()
         assert "question='cats'" in message
         for pair in ("2:0.1400", "0:0.1100", "1:0.0300", "3:-0.1700"):
             assert pair in message
@@ -406,34 +432,34 @@ class TestScoreLogging:
         assert "secret about b" not in message
         assert "doc-a" not in message
 
-    def test_scores_not_logged_when_disabled(self, monkeypatch, caplog):
+    def test_scores_not_logged_when_disabled(self, monkeypatch):
         store = UserFilteredStore(ALL_CANDIDATES)
         enable_rerank(monkeypatch, RERANK_LOG_SCORES=False)
         reranker = ScriptedReranker(results=[(2, 0.9)])
 
-        with caplog.at_level(logging.INFO, logger="app.rag.retrieve"):
+        with capture_retrieve_logs() as records:
             retrieve_reranked_chunks(
                 "cats", USER_A, store=store, reranker=reranker
             )
         assert not [
             record
-            for record in caplog.records
+            for record in records
             if "Rerank scores" in record.getMessage()
         ]
 
-    def test_long_question_is_truncated_to_60_chars(self, monkeypatch, caplog):
+    def test_long_question_is_truncated_to_60_chars(self, monkeypatch):
         store = UserFilteredStore(ALL_CANDIDATES)
         enable_rerank(monkeypatch, RERANK_LOG_SCORES=True)
         reranker = ScriptedReranker(results=[(0, 0.5)])
         question = "q" * 100
 
-        with caplog.at_level(logging.INFO, logger="app.rag.retrieve"):
+        with capture_retrieve_logs() as records:
             retrieve_reranked_chunks(
                 question, USER_A, store=store, reranker=reranker
             )
         message = [
             record
-            for record in caplog.records
+            for record in records
             if "Rerank scores" in record.getMessage()
         ][0].getMessage()
         logged_question = message.split("question='")[1].split("'")[0]

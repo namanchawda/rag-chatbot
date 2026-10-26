@@ -174,3 +174,71 @@ export function deleteDocument(
     token,
   });
 }
+
+export type StoredChatSource = {
+  document_id: string;
+  source: string;
+  chunk_index: number;
+  snippet: string;
+};
+
+export type SessionItem = {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoredMessage = {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: StoredChatSource[] | null;
+  created_at: string;
+};
+
+export function listSessions(
+  token: string,
+  limit = 100,
+): Promise<SessionItem[]> {
+  return apiRequest<SessionItem[]>(`/sessions?limit=${limit}`, { token });
+}
+
+export function createSession(token: string): Promise<SessionItem> {
+  return apiRequest<SessionItem>("/sessions", {
+    method: "POST",
+    body: {},
+    token,
+  });
+}
+
+export function listSessionMessages(
+  token: string,
+  sessionId: string,
+): Promise<StoredMessage[]> {
+  return apiRequest<StoredMessage[]>(`/sessions/${sessionId}/messages`, {
+    token,
+  });
+}
+
+export function renameSession(
+  token: string,
+  sessionId: string,
+  title: string,
+): Promise<SessionItem> {
+  return apiRequest<SessionItem>(`/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: { title },
+    token,
+  });
+}
+
+export function deleteSession(
+  token: string,
+  sessionId: string,
+): Promise<null> {
+  return apiRequest<null>(`/sessions/${sessionId}`, {
+    method: "DELETE",
+    token,
+  });
+}

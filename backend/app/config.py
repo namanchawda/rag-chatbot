@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     RERANK_TOP_N: int = 5
     RERANK_MIN_SCORE: float | None = None
     RERANK_LOG_SCORES: bool = False
+    LOG_LEVEL: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 

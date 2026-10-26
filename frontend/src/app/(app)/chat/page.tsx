@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -9,19 +10,23 @@ import {
   type KeyboardEvent,
 } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Markdown from "react-markdown";
 import {
   ApiError,
   clearToken,
+  deleteSession,
   getStoredToken,
   listDocuments,
+  listSessionMessages,
+  listSessions,
+  renameSession,
   type DocumentItem,
+  type SessionItem,
+  type StoredMessage,
 } from "@/lib/api";
-import {
-  streamChat,
-  type ChatSource,
-} from "@/lib/chat";
+import { streamChat, type ChatSource } from "@/lib/chat";
+import { ConversationsPanel } from "@/components/conversations-panel";
 
 const MAX_QUESTION_CHARS = 2000;
 const COUNTER_THRESHOLD = 1800;
@@ -56,6 +61,20 @@ let messageId = 0;
 function nextId(): string {
   messageId += 1;
   return `m${messageId}`;
+}
+
+function mapHistoryMessage(message: StoredMessage): Message {
+  if (message.role === "user") {
+    return { id: message.id, role: "user", content: message.content };
+  }
+  return {
+    id: message.id,
+    role: "assistant",
+    question: "",
+    content: message.content,
+    sources: message.sources ?? [],
+    state: "done",
+  };
 }
 
 function groupSourcesByFile(sources: ChatSource[]): [string, ChatSource[]][] {
@@ -126,20 +145,171 @@ function SourcesDisclosure({ sources }: { sources: ChatSource[] }) {
   );
 }
 
-export default function ChatPage() {
+function HistorySkeleton() {
+  return (
+    <div role="status" className="space-y-4 pt-4">
+      <span className="sr-only">Loading conversation…</span>
+      <div className="flex justify-end">
+        <div className="h-9 w-1/3 animate-pulse rounded-[20px] bg-active" />
+      </div>
+      <div className="flex justify-start">
+        <div className="h-24 w-2/3 animate-pulse rounded-[20px] bg-active" />
+      </div>
+      <div className="flex justify-start">
+        <div className="h-14 w-1/2 animate-pulse rounded-[20px] bg-active" />
+      </div>
+    </div>
+  );
+}
+
+function ChatWorkspace() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const urlSession = searchParams.get("session");
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const requestIdRef = useRef(0);
+  const activeIdRef = useRef<string | null>(null);
+  // The ?session= value we last acknowledged or wrote ourselves; a mismatch
+  // means navigation we did not initiate (mount, back/forward, link).
+  const urlWrittenRef = useRef<string | null>(null);
 
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionItem[] | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
+  const [historyState, setHistoryState] = useState<
+    "idle" | "loading" | "done" | "error"
+  >("idle");
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [streamingQuestion, setStreamingQuestion] = useState<string | null>(null);
   const [documents, setDocuments] = useState<DocumentItem[] | null>(null);
   const [isPinned, setIsPinned] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerRef = useRef<HTMLDivElement>(null);
+  const drawerToggleRef = useRef<HTMLButtonElement>(null);
 
   const readyCount =
     documents?.filter((document) => document.status === "ready").length ?? 0;
+
+  const noteSessionActivity = useCallback((sessionId: string) => {
+    const nowIso = new Date().toISOString();
+    setSessions((current) => {
+      if (!current) return current;
+      const existing = current.find((session) => session.id === sessionId);
+      const item: SessionItem = existing
+        ? { ...existing, updated_at: nowIso }
+        : { id: sessionId, title: "", created_at: nowIso, updated_at: nowIso };
+      return [item, ...current.filter((session) => session.id !== sessionId)];
+    });
+  }, []);
+
+  const loadSessions = useCallback(() => {
+    const token = getStoredToken();
+    if (!token) return;
+    void (async () => {
+      try {
+        const list = await listSessions(token, 100);
+        setSessions(list);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          clearToken();
+          router.replace("/login");
+          return;
+        }
+        setListError(
+          error instanceof ApiError
+            ? error.message
+            : "Could not load your conversations. Please try again.",
+        );
+      }
+    })();
+  }, [router]);
+
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  const openSession = useCallback(
+    (sessionId: string | null, writeUrl = false) => {
+      // Abort any in-flight answer first; the partial answer is saved
+      // server-side as if Stop was pressed.
+      abortRef.current?.abort();
+      abortRef.current = null;
+      setDrawerOpen(false);
+      setListError(null);
+      setHistoryError(null);
+      setStreamingQuestion(null);
+      activeIdRef.current = sessionId;
+      setActiveSessionId(sessionId);
+
+      if (writeUrl) {
+        urlWrittenRef.current = sessionId;
+        router.replace(
+          sessionId === null ? "/chat" : `/chat?session=${sessionId}`,
+        );
+      }
+
+      if (sessionId === null) {
+        setMessages([]);
+        setHistoryState("idle");
+        return;
+      }
+
+      setMessages([]);
+      setHistoryState("loading");
+      const token = getStoredToken();
+      if (!token) {
+        clearToken();
+        router.replace("/login");
+        return;
+      }
+      void (async () => {
+        try {
+          const stored = await listSessionMessages(token, sessionId);
+          if (activeIdRef.current !== sessionId) return;
+          setMessages(stored.map(mapHistoryMessage));
+          setHistoryState("done");
+        } catch (error) {
+          if (activeIdRef.current !== sessionId) return;
+          if (error instanceof ApiError && error.status === 401) {
+            clearToken();
+            router.replace("/login");
+            return;
+          }
+          if (error instanceof ApiError && error.status === 404) {
+            setHistoryError(
+              "That conversation is no longer available — you are back to a fresh chat.",
+            );
+            activeIdRef.current = null;
+            setActiveSessionId(null);
+            setMessages([]);
+            urlWrittenRef.current = null;
+            router.replace("/chat");
+            return;
+          }
+          setHistoryError(
+            error instanceof ApiError
+              ? error.message
+              : "Could not load the conversation. Please try again.",
+          );
+          setHistoryState("error");
+        }
+      })();
+    },
+    [router],
+  );
+
+  // React to mount and to back/forward navigation; our own URL writes are
+  // acknowledged via urlWrittenRef and skipped here.
+  useEffect(() => {
+    if (urlWrittenRef.current === urlSession) return;
+    urlWrittenRef.current = urlSession;
+    openSession(urlSession, false);
+  }, [openSession, urlSession]);
 
   // Document caption: fetch the list once on mount.
   useEffect(() => {
@@ -165,6 +335,29 @@ export default function ChatPage() {
       cancelled = true;
     };
   }, [router]);
+
+  // Drawer focus handling: focus its first control when it opens, Escape
+  // closes it, focus returns to the toggle button afterwards.
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const pendingFocus = drawerToggleRef.current;
+    const panel = drawerRef.current;
+    const firstControl = panel?.querySelector<HTMLElement>("button") ?? null;
+    firstControl?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setDrawerOpen(false);
+        pendingFocus?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      pendingFocus?.focus();
+    };
+  }, [drawerOpen]);
+
   const isPinnedRef = useRef(true);
   const scrollToBottom = useCallback((smooth: boolean) => {
     const container = scrollRef.current;
@@ -204,6 +397,17 @@ export default function ChatPage() {
         return;
       }
 
+      const requestId = ++requestIdRef.current;
+      const startSessionId = activeIdRef.current;
+      let streamSession = startSessionId;
+      const controller = new AbortController();
+      abortRef.current = controller;
+      // Guards against late events writing into another conversation:
+      // switching or a new chat aborts the stream AND bumps the request id.
+      const bailed = () =>
+        requestIdRef.current !== requestId || controller.signal.aborted;
+      const isCurrent = () => !bailed() && activeIdRef.current === streamSession;
+
       const assistantId = nextId();
       setMessages((current) => [
         ...current,
@@ -220,9 +424,6 @@ export default function ChatPage() {
       setStreamingQuestion(question);
       setIsPinned(true);
 
-      const controller = new AbortController();
-      abortRef.current = controller;
-
       const patchAssistant = (patch: Partial<AssistantMessage>) => {
         setMessages((current) =>
           current.map((message) =>
@@ -234,23 +435,65 @@ export default function ChatPage() {
       };
 
       try {
-        await streamChat(question, token, controller.signal, (event) => {
-          if (event.type === "sources") {
-            patchAssistant({ sources: event.sources });
-          } else if (event.type === "token") {
-            setMessages((current) =>
-              current.map((message) =>
-                message.id === assistantId && message.role === "assistant"
-                  ? { ...message, content: message.content + event.text }
-                  : message,
-              ),
-            );
-          } else if (event.type === "error") {
-            patchAssistant({ state: "error", errorMessage: event.message });
-          } else {
-            patchAssistant({ state: "done" });
-          }
-        });
+        await streamChat(
+          question,
+          token,
+          controller.signal,
+          (event) => {
+            if (bailed()) return;
+            if (event.type === "session") {
+              streamSession = event.sessionId;
+              if (startSessionId === null) {
+                // A fresh chat just became a real conversation: adopt the
+                // backend-created session without interrupting the stream.
+                activeIdRef.current = event.sessionId;
+                setActiveSessionId(event.sessionId);
+                urlWrittenRef.current = event.sessionId;
+                router.replace(`/chat?session=${event.sessionId}`);
+                const nowIso = new Date().toISOString();
+                setSessions((current) => {
+                  const existing = current?.find(
+                    (session) => session.id === event.sessionId,
+                  );
+                  const item: SessionItem = existing
+                    ? {
+                        ...existing,
+                        title: event.title || existing.title,
+                        updated_at: nowIso,
+                      }
+                    : {
+                        id: event.sessionId,
+                        title: event.title,
+                        created_at: nowIso,
+                        updated_at: nowIso,
+                      };
+                  return [
+                    item,
+                    ...(current?.filter(
+                      (session) => session.id !== event.sessionId,
+                    ) ?? []),
+                  ];
+                });
+              }
+            } else if (event.type === "sources") {
+              patchAssistant({ sources: event.sources });
+            } else if (event.type === "token") {
+              if (!isCurrent()) return;
+              setMessages((current) =>
+                current.map((message) =>
+                  message.id === assistantId && message.role === "assistant"
+                    ? { ...message, content: message.content + event.text }
+                    : message,
+                ),
+              );
+            } else if (event.type === "error") {
+              patchAssistant({ state: "error", errorMessage: event.message });
+            } else {
+              patchAssistant({ state: "done" });
+            }
+          },
+          { sessionId: startSessionId },
+        );
         // An abort via Stop returns normally: keep the partial answer.
       } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
@@ -266,19 +509,24 @@ export default function ChatPage() {
               : "Something went wrong. Please try again.",
         });
       } finally {
-        abortRef.current = null;
-        setStreamingQuestion(null);
-        // Never leave a message stuck in the streaming state (e.g. Stop).
-        setMessages((current) =>
-          current.map((message) =>
-            message.role === "assistant" && message.state === "streaming"
-              ? { ...message, state: "done" }
-              : message,
-          ),
-        );
+        if (requestIdRef.current === requestId) {
+          abortRef.current = null;
+          setStreamingQuestion(null);
+          // Never leave a message stuck in the streaming state (e.g. Stop).
+          setMessages((current) =>
+            current.map((message) =>
+              message.role === "assistant" && message.state === "streaming"
+                ? { ...message, state: "done" }
+                : message,
+            ),
+          );
+          // The conversation's answer finished (or stopped): newest activity.
+          // streamSession was adopted from the session event, if any.
+          if (streamSession !== null) noteSessionActivity(streamSession);
+        }
       }
     },
-    [router],
+    [noteSessionActivity, router],
   );
 
   function sendMessage() {
@@ -320,7 +568,9 @@ export default function ChatPage() {
   }
 
   const isSendEnabled =
-    input.trim().length > 0 && streamingQuestion === null;
+    input.trim().length > 0 &&
+    streamingQuestion === null &&
+    historyState !== "loading";
 
   const lastAssistantError = [...messages]
     .reverse()
@@ -328,190 +578,363 @@ export default function ChatPage() {
       (message) => message.role === "assistant" && message.state === "error",
     );
 
+  const isEmptyNewChat =
+    activeSessionId === null &&
+    messages.length === 0 &&
+    historyState !== "loading";
+
+  const handleRename = useCallback(
+    async (sessionId: string, title: string) => {
+      const token = getStoredToken();
+      if (!token) {
+        clearToken();
+        router.replace("/login");
+        return;
+      }
+      try {
+        const updated = await renameSession(token, sessionId, title);
+        setSessions((current) =>
+          current
+            ? current.map((session) =>
+                session.id === sessionId ? updated : session,
+              )
+            : current,
+        );
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          clearToken();
+          router.replace("/login");
+          return;
+        }
+        setListError(
+          error instanceof ApiError
+            ? error.message
+            : "Could not rename the conversation. Please try again.",
+        );
+      }
+    },
+    [router],
+  );
+
+  const handleDelete = useCallback(
+    async (sessionId: string) => {
+      const token = getStoredToken();
+      if (!token) {
+        clearToken();
+        router.replace("/login");
+        return;
+      }
+      try {
+        await deleteSession(token, sessionId);
+        setSessions((current) =>
+          current ? current.filter((session) => session.id !== sessionId) : current,
+        );
+        if (activeIdRef.current === sessionId) {
+          openSession(null, true);
+        }
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 401) {
+          clearToken();
+          router.replace("/login");
+          return;
+        }
+        setListError(
+          error instanceof ApiError
+            ? error.message
+            : "Could not delete the conversation. Please try again.",
+        );
+      }
+    },
+    [openSession, router],
+  );
+
   return (
-    <main className="relative flex flex-1 flex-col overflow-hidden">
-      <div
-        ref={scrollRef}
-        onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-6 pb-6 pt-8 md:px-10"
-      >
-        <div className="mx-auto max-w-3xl space-y-5">
-          {messages.length === 0 ? (
-            <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-14 text-center">
-              <span
-                aria-hidden="true"
-                className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-accent text-2xl text-white shadow-card"
-              >
-                ✦
-              </span>
-              <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
-                Hey — ask anything about your documents
-              </h1>
-              {documents === null ? (
-                <p className="mt-2 text-sm text-muted">Loading your library…</p>
-              ) : readyCount > 0 ? (
-                <p className="mt-2 text-sm text-muted">
-                  Chatting across {readyCount}{" "}
-                  {readyCount === 1 ? "document" : "documents"} — answers stay
-                  grounded in them.
-                </p>
-              ) : (
-                <p className="mt-2 text-sm text-muted">
-                  No ready documents yet.{" "}
-                  <Link
-                    href="/documents"
-                    className="rounded-sm font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                  >
-                    Upload one in Documents
-                  </Link>{" "}
-                  and it will be ready in a moment.
-                </p>
-              )}
-              {readyCount > 0 && (
-                <div className="mt-8 flex flex-wrap justify-center gap-2.5">
-                  {EXAMPLE_QUESTIONS.map((question) => (
-                    <button
-                      key={question}
-                      type="button"
-                      onClick={() => {
-                        handleChange(question);
-                        textareaRef.current?.focus();
-                      }}
-                      className="rounded-full border border-card-border bg-card px-4 py-2 text-sm text-muted shadow-card backdrop-blur-2xl transition hover:border-accent/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                    >
-                      {question}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            messages.map((message) => {
-              if (message.role === "user") {
-                return (
-                  <div key={message.id} className="animate-appear flex justify-end">
-                    <div className="max-w-[80%] whitespace-pre-wrap rounded-[20px] bg-accent px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
-                      {message.content}
-                    </div>
-                  </div>
-                );
-              }
+    <main className="relative flex flex-1 overflow-hidden">
+      <ConversationsPanel
+        sessions={sessions}
+        error={listError}
+        activeSessionId={activeSessionId}
+        className="hidden w-72 shrink-0 border-r min-[900px]:flex"
+        onSelect={(sessionId) => openSession(sessionId, true)}
+        onNewChat={() => {
+          openSession(null, true);
+          textareaRef.current?.focus();
+        }}
+        onRename={handleRename}
+        onDelete={handleDelete}
+        onRetry={loadSessions}
+        onDismissError={() => setListError(null)}
+      />
 
-              const isStreaming = message.state === "streaming";
-              return (
-                <div
-                  key={message.id}
-                  className="animate-appear max-w-[85%] rounded-[20px] border border-card-border bg-card px-4 py-3 shadow-card backdrop-blur-2xl"
-                >
-                  {message.content.length > 0 ? (
-                    <div aria-live={isStreaming ? "polite" : undefined}>
-                      <AssistantMarkdown content={message.content} />
-                    </div>
-                  ) : isStreaming ? (
-                    <div aria-live="polite">
-                      <TypingIndicator />
-                    </div>
-                  ) : (
-                    <div aria-live="polite" className="text-sm text-muted">
-                      —
-                    </div>
-                  )}
-
-                  {message.errorMessage && (
-                    <p
-                      role="alert"
-                      className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400"
-                    >
-                      {message.content.length > 0 && (
-                        <span className="font-medium">
-                          The answer stopped early.{" "}
-                        </span>
-                      )}
-                      {message.errorMessage}
-                    </p>
-                  )}
-
-                  {!isStreaming && message.sources.length > 0 && (
-                    <SourcesDisclosure sources={message.sources} />
-                  )}
-                </div>
-              );
-            })
-          )}
-
-          {!streamingQuestion &&
-            (lastAssistantError as AssistantMessage | undefined)?.question && (
-              <button
-                type="button"
-                onClick={retryLast}
-                className="rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                ↻ Retry last question
-              </button>
-            )}
+      {/* Slide-over drawer under ~900px */}
+      {drawerOpen && (
+        <div className="fixed inset-0 z-30 min-[900px]:hidden">
+          <div
+            aria-hidden="true"
+            onClick={() => setDrawerOpen(false)}
+            className="absolute inset-0 bg-black/40"
+          />
+          <div
+            ref={drawerRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Conversations"
+            className="animate-appear absolute inset-y-0 left-0 flex w-80 max-w-[85vw] flex-col border-r border-card-border bg-background shadow-card"
+          >
+            <ConversationsPanel
+              sessions={sessions}
+              error={listError}
+              activeSessionId={activeSessionId}
+              className="flex min-h-0 flex-1 flex-col"
+              onSelect={(sessionId) => openSession(sessionId, true)}
+              onNewChat={() => {
+                openSession(null, true);
+                textareaRef.current?.focus();
+              }}
+              onRename={handleRename}
+              onDelete={handleDelete}
+              onRetry={loadSessions}
+              onDismissError={() => setListError(null)}
+            />
+          </div>
         </div>
-      </div>
-
-      {!isPinned && (
-        <button
-          type="button"
-          onClick={jumpToLatest}
-          className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-card-border bg-card px-4 py-1.5 text-xs font-medium text-muted shadow-card backdrop-blur-2xl transition hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-        >
-          ↓ Jump to latest
-        </button>
       )}
 
-      <div className="shrink-0 border-t border-card-border bg-card/80 px-6 py-4 backdrop-blur-2xl md:px-10">
-        <div className="mx-auto max-w-3xl">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              disabled={streamingQuestion !== null}
-              placeholder="Ask about your documents…"
-              aria-label="Your question"
-              onChange={(event) => handleChange(event.target.value)}
-              onKeyDown={handleComposerKeyDown}
-              className="min-h-[44px] flex-1 resize-none overflow-hidden rounded-[20px] border border-input-border bg-input px-4 py-2.5 text-[15px] leading-relaxed text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
-            />
-            {streamingQuestion === null ? (
-              <button
-                type="button"
-                onClick={sendMessage}
-                disabled={!isSendEnabled}
-                aria-label="Send question"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-lg text-white shadow-sm transition hover:bg-accent-hover active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                ↑
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={stopStreaming}
-                aria-label="Stop generating answer"
-                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-input-border bg-input text-foreground shadow-sm transition hover:bg-active active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
+      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-card-border bg-card/60 px-4 py-2 min-[900px]:hidden">
+          <button
+            ref={drawerToggleRef}
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            aria-label="Open conversations"
+            className="rounded-lg px-2 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            ☰ Conversations
+          </button>
+        </div>
+
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          className="flex-1 overflow-y-auto px-6 pb-6 pt-8 md:px-10"
+        >
+          <div className="mx-auto max-w-3xl space-y-5">
+            {isEmptyNewChat ? (
+              <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-14 text-center">
                 <span
                   aria-hidden="true"
-                  className="h-3.5 w-3.5 rounded-[5px] bg-current"
-                />
-              </button>
+                  className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-accent text-2xl text-white shadow-card"
+                >
+                  ✦
+                </span>
+                <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
+                  Hey — ask anything about your documents
+                </h1>
+                {documents === null ? (
+                  <p className="mt-2 text-sm text-muted">Loading your library…</p>
+                ) : readyCount > 0 ? (
+                  <p className="mt-2 text-sm text-muted">
+                    Chatting across {readyCount}{" "}
+                    {readyCount === 1 ? "document" : "documents"} — answers stay
+                    grounded in them.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-muted">
+                    No ready documents yet.{" "}
+                    <Link
+                      href="/documents"
+                      className="rounded-sm font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                      Upload one in Documents
+                    </Link>{" "}
+                    and it will be ready in a moment.
+                  </p>
+                )}
+                {readyCount > 0 && (
+                  <div className="mt-8 flex flex-wrap justify-center gap-2.5">
+                    {EXAMPLE_QUESTIONS.map((question) => (
+                      <button
+                        key={question}
+                        type="button"
+                        onClick={() => {
+                          handleChange(question);
+                          textareaRef.current?.focus();
+                        }}
+                        className="rounded-full border border-card-border bg-card px-4 py-2 text-sm text-muted shadow-card backdrop-blur-2xl transition hover:border-accent/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      >
+                        {question}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : historyState === "loading" ? (
+              <HistorySkeleton />
+            ) : (
+              messages.map((message) => {
+                if (message.role === "user") {
+                  return (
+                    <div key={message.id} className="animate-appear flex justify-end">
+                      <div className="max-w-[80%] whitespace-pre-wrap rounded-[20px] bg-accent px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
+                        {message.content}
+                      </div>
+                    </div>
+                  );
+                }
+
+                const isStreaming = message.state === "streaming";
+                return (
+                  <div
+                    key={message.id}
+                    className="animate-appear max-w-[85%] rounded-[20px] border border-card-border bg-card px-4 py-3 shadow-card backdrop-blur-2xl"
+                  >
+                    {message.content.length > 0 ? (
+                      <div aria-live={isStreaming ? "polite" : undefined}>
+                        <AssistantMarkdown content={message.content} />
+                      </div>
+                    ) : isStreaming ? (
+                      <div aria-live="polite">
+                        <TypingIndicator />
+                      </div>
+                    ) : (
+                      <div aria-live="polite" className="text-sm text-muted">
+                        —
+                      </div>
+                    )}
+
+                    {message.errorMessage && (
+                      <p
+                        role="alert"
+                        className="mt-2 rounded-xl border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400"
+                      >
+                        {message.content.length > 0 && (
+                          <span className="font-medium">
+                            The answer stopped early.{" "}
+                          </span>
+                        )}
+                        {message.errorMessage}
+                      </p>
+                    )}
+
+                    {!isStreaming && message.sources.length > 0 && (
+                      <SourcesDisclosure sources={message.sources} />
+                    )}
+                  </div>
+                );
+              })
+            )}
+
+            {historyError && (
+              <p
+                role="alert"
+                className="mx-auto max-w-md rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-3 text-center text-sm text-red-600 dark:text-red-400"
+              >
+                {historyError}
+              </p>
+            )}
+            {historyState === "error" && activeSessionId !== null && (
+              <div className="flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const failed = activeSessionId;
+                    if (failed !== null) openSession(failed, true);
+                  }}
+                  className="rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  ↻ Try again
+                </button>
+              </div>
+            )}
+
+            {!streamingQuestion &&
+              (lastAssistantError as AssistantMessage | undefined)?.question && (
+                <button
+                  type="button"
+                  onClick={retryLast}
+                  className="rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  ↻ Retry last question
+                </button>
+              )}
+          </div>
+        </div>
+
+        {!isPinned && (
+          <button
+            type="button"
+            onClick={jumpToLatest}
+            className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-card-border bg-card px-4 py-1.5 text-xs font-medium text-muted shadow-card backdrop-blur-2xl transition hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            ↓ Jump to latest
+          </button>
+        )}
+
+        <div className="shrink-0 border-t border-card-border bg-card/80 px-6 py-4 backdrop-blur-2xl md:px-10">
+          <div className="mx-auto max-w-3xl">
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={textareaRef}
+                rows={1}
+                value={input}
+                disabled={streamingQuestion !== null || historyState === "loading"}
+                placeholder="Ask about your documents…"
+                aria-label="Your question"
+                onChange={(event) => handleChange(event.target.value)}
+                onKeyDown={handleComposerKeyDown}
+                className="min-h-[44px] flex-1 resize-none overflow-hidden rounded-[20px] border border-input-border bg-input px-4 py-2.5 text-[15px] leading-relaxed text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
+              />
+              {streamingQuestion === null ? (
+                <button
+                  type="button"
+                  onClick={sendMessage}
+                  disabled={!isSendEnabled}
+                  aria-label="Send question"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-accent text-lg text-white shadow-sm transition hover:bg-accent-hover active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ↑
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={stopStreaming}
+                  aria-label="Stop generating answer"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-input-border bg-input text-foreground shadow-sm transition hover:bg-active active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="h-3.5 w-3.5 rounded-[5px] bg-current"
+                  />
+                </button>
+              )}
+            </div>
+            {input.length >= COUNTER_THRESHOLD && (
+              <p
+                aria-live={input.length >= MAX_QUESTION_CHARS ? "polite" : "off"}
+                className={`mt-2 text-right text-xs ${
+                  input.length >= MAX_QUESTION_CHARS ? "text-red-500" : "text-muted"
+                }`}
+              >
+                {input.length}/{MAX_QUESTION_CHARS}
+              </p>
             )}
           </div>
-          {input.length >= COUNTER_THRESHOLD && (
-            <p
-              aria-live={input.length >= MAX_QUESTION_CHARS ? "polite" : "off"}
-              className={`mt-2 text-right text-xs ${
-                input.length >= MAX_QUESTION_CHARS ? "text-red-500" : "text-muted"
-              }`}
-            >
-              {input.length}/{MAX_QUESTION_CHARS}
-            </p>
-          )}
         </div>
       </div>
     </main>
+  );
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex flex-1 items-center justify-center">
+          <p className="text-sm text-muted">Loading…</p>
+        </main>
+      }
+    >
+      <ChatWorkspace />
+    </Suspense>
   );
 }

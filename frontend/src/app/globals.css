@@ -124,6 +124,10 @@ h3 {
   .animate-appear {
     animation: none;
   }
+  .animate-pulse {
+    animation: none;
+    opacity: 0.6;
+  }
 }
 
 /* Typing indicator (three pulsing dots) */

@@ -8,6 +8,7 @@ export type ChatSource = {
 };
 
 export type ChatEvent =
+  | { type: "session"; sessionId: string; title: string }
   | { type: "sources"; sources: ChatSource[] }
   | { type: "token"; text: string }
   | { type: "done" }
@@ -57,6 +58,7 @@ export async function streamChat(
   token: string,
   signal: AbortSignal,
   onEvent: (event: ChatEvent) => void,
+  options: { sessionId?: string | null } = {},
 ): Promise<void> {
   let response: Response;
   try {
@@ -67,7 +69,13 @@ export async function streamChat(
         Accept: "text/event-stream",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ question }),
+      // Omit session_id for a fresh chat; the backend then creates a session
+      // and reports it in the first "session" SSE event.
+      body: JSON.stringify(
+        options.sessionId
+          ? { question, session_id: options.sessionId }
+          : { question },
+      ),
       signal,
     });
   } catch (error) {
@@ -104,7 +112,25 @@ export async function streamChat(
     partial = parsed.remainder;
 
     for (const sse of parsed.events) {
-      if (sse.event === "sources") {
+      if (sse.event === "session") {
+        // First event of a stream: the id of the conversation this answer
+        // belongs to (new for fresh chats).
+        try {
+          const payload = JSON.parse(sse.data) as {
+            session_id?: string;
+            title?: string;
+          };
+          if (typeof payload.session_id === "string" && payload.session_id) {
+            onEvent({
+              type: "session",
+              sessionId: payload.session_id,
+              title: typeof payload.title === "string" ? payload.title : "",
+            });
+          }
+        } catch {
+          // Malformed session payload: keep going, the rest still works.
+        }
+      } else if (sse.event === "sources") {
         try {
           const payload = JSON.parse(sse.data) as { sources?: ChatSource[] };
           onEvent({ type: "sources", sources: payload.sources ?? [] });
