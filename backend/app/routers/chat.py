@@ -25,7 +25,7 @@ from ..rag.chat import (
     friendly_error,
     make_chain,
 )
-from ..rag.retrieve import RetrievedChunk, retrieve_chunks
+from ..rag.retrieve import RetrievedChunk, retrieve_reranked_chunks
 from ..schemas import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -95,7 +95,7 @@ def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) 
     if not _user_has_ready_documents(current_user.id):
         return ChatResponse(answer=NO_DOCUMENTS_MESSAGE, sources=[])
 
-    chunks = retrieve_chunks(question, current_user.id)
+    chunks = retrieve_reranked_chunks(question, current_user.id)
     if not chunks:
         return ChatResponse(answer=NO_RESULTS_MESSAGE, sources=[])
 
@@ -142,7 +142,7 @@ async def chat_stream(
         try:
             # The blocking embed + SQL call happens in a worker thread so the
             # event loop stays free.
-            chunks = await run_in_threadpool(retrieve_chunks, question, user_id)
+            chunks = await run_in_threadpool(retrieve_reranked_chunks, question, user_id)
         except Exception:  # noqa: BLE001
             logger.exception("Retrieval failed for user %s", user_id)
             yield _sse("error", {"error": "Could not search your documents. Please try again."})

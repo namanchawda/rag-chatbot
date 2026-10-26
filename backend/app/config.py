@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     GROQ_MODEL: str
     RETRIEVAL_TOP_K: int = 5
     MAX_QUESTION_CHARS: int = 2000
+    RERANK_ENABLED: bool = True
+    JINA_RERANK_MODEL: str = "jina-reranker-v3.5"
+    RETRIEVAL_CANDIDATES: int = 20
+    RERANK_TOP_N: int = 5
+    RERANK_MIN_SCORE: float | None = None
+    RERANK_LOG_SCORES: bool = False
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 
