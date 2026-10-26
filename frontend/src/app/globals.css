@@ -125,3 +125,107 @@ h3 {
     animation: none;
   }
 }
+
+/* Typing indicator (three pulsing dots) */
+@keyframes typing {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+.typing-dots > span {
+  animation: typing 1.2s ease-in-out infinite;
+}
+.typing-dots > span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.typing-dots > span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .typing-dots > span {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+/* Safe markdown rendering inside assistant bubbles, matched to app typography */
+.chat-markdown > *:first-child {
+  margin-top: 0;
+}
+.chat-markdown > *:last-child {
+  margin-bottom: 0;
+}
+.chat-markdown p {
+  margin: 0.5em 0;
+}
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 0.5em 0;
+  padding-left: 1.4em;
+}
+.chat-markdown ul {
+  list-style: disc;
+}
+.chat-markdown ol {
+  list-style: decimal;
+}
+.chat-markdown strong {
+  font-weight: 600;
+}
+.chat-markdown em {
+  font-style: italic;
+}
+.chat-markdown code,
+.chat-markdown pre {
+  font-family:
+    "SF Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+}
+.chat-markdown code {
+  background: var(--active);
+  border-radius: 6px;
+  padding: 0.15em 0.4em;
+}
+.chat-markdown pre {
+  background: var(--active);
+  border: 1px solid var(--card-border);
+  border-radius: 12px;
+  margin: 0.6em 0;
+  overflow-x: auto;
+  padding: 0.7em 0.9em;
+}
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+}
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3 {
+  font-size: 1.05em;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  margin: 0.8em 0 0.3em;
+}
+.chat-markdown blockquote {
+  border-left: 3px solid var(--card-border);
+  color: var(--muted);
+  margin: 0.5em 0;
+  padding-left: 0.9em;
+}
+.chat-markdown hr {
+  border-color: var(--card-border);
+  margin: 0.8em 0;
+}
+.chat-markdown a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
