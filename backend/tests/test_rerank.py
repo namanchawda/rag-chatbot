@@ -536,10 +536,12 @@ class TestChatEndpointsWithRerank:
             for line in text.splitlines()
             if line.startswith("event: ")
         ]
-        # SSE order unchanged: sources first, tokens, done last — and no
-        # error event, since the reranker failure is a silent fallback.
-        assert names[0] == "sources"
+        # SSE order: session event is the new first frame, then sources,
+        # tokens, done last — with no error event, since the reranker
+        # failure is a silent fallback.
+        assert names[0] == "session"
+        assert names[1] == "sources"
         assert names[-1] == "done"
-        assert set(names[1:-1]) == {"token"}
+        assert set(names[2:-1]) == {"token"}
         assert "error" not in names
         assert FakeStreamLLM.calls

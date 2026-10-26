@@ -6,7 +6,9 @@ applies it inside the SQL query. That lets the tests prove the caller's
 user_id is always in the filter and that other users' chunks never surface.
 """
 
+import asyncio
 import json
+import time
 import uuid
 from typing import ClassVar
 
@@ -16,9 +18,12 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
+from sqlalchemy import select
 
+from app.db import SessionLocal
 from app.deps import get_current_user
 from app.main import create_app
+from app.models import ChatMessage, ChatRole, ChatSession
 from app.models import Document as DocumentRow
 from app.models import DocumentStatus
 from app.rag import retrieve as retrieve_module
@@ -290,7 +295,7 @@ class ExplodingSyncLLM(BaseChatModel):
 
 
 class TestChatStreamEndpoint:
-    def test_event_order_sources_tokens_done(self, monkeypatch, users, ready_store):
+    def test_event_order_session_sources_tokens_done(self, monkeypatch, users, ready_store):
         FakeStreamLLM.calls = []
         with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
             response = stream_client.post("/chat/stream", json={"question": "cats?"})
@@ -301,20 +306,25 @@ class TestChatStreamEndpoint:
 
         events = _parse_sse(response.text)
         names = [name for name, data in events]
-        assert names[0] == "sources"
+        assert names[0] == "session"
+        assert names[1] == "sources"
         assert names[-1] == "done"
-        assert set(names[1:-1]) == {"token"}
+        assert set(names[2:-1]) == {"token"}
         assert "error" not in names
+        session_payload = json.loads(events[0][1])
+        assert set(session_payload) == {"session_id", "title"}
+        assert session_payload["session_id"]
         assert FakeStreamLLM.calls, "the streaming chain was not invoked"
         assert "cats?" in str(FakeStreamLLM.calls[0][1].content)
 
-    def test_sources_sent_first_as_json_without_other_users(
+    def test_sources_follow_session_event_without_other_users(
         self, monkeypatch, users, ready_store
     ):
         with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
             response = stream_client.post("/chat/stream", json={"question": "cats"})
         events = _parse_sse(response.text)
-        kind, data = events[0]
+        assert events[0][0] == "session"
+        kind, data = events[1]
         assert kind == "sources"
         payload = json.loads(data)
         assert [item["chunk_index"] for item in payload["sources"]] == [0, 1]
@@ -337,9 +347,10 @@ class TestChatStreamEndpoint:
             response = stream_client.post("/chat/stream", json={"question": "cats"})
         events = _parse_sse(response.text)
         names = [name for name, data in events]
-        assert names == ["sources", "token", "done"]
-        assert json.loads(events[0][1])["sources"] == []
-        assert json.loads(events[1][1])["text"] == NO_DOCUMENTS_MESSAGE
+        assert names == ["session", "sources", "token", "done"]
+        assert json.loads(events[0][1])["title"] == "cats"
+        assert json.loads(events[1][1])["sources"] == []
+        assert json.loads(events[2][1])["text"] == NO_DOCUMENTS_MESSAGE
         assert not FakeStreamLLM.calls
 
     def test_stream_errors_become_error_events(self, monkeypatch, users, ready_store):
@@ -378,3 +389,243 @@ class TestFriendlyErrorMapping:
 
     def test_generic_message_never_leaks_details(self):
         assert friendly_error(ValueError("the JINA key is dead")) == GENERIC_ERROR_MESSAGE
+
+
+class TestChatSessionPersistence:
+    """Every chat turn must land in a caller-owned chat session."""
+
+    @staticmethod
+    def _fetch_messages(session_id):
+        with SessionLocal() as db:
+            return list(
+                db.scalars(
+                    select(ChatMessage)
+                    .where(ChatMessage.session_id == session_id)
+                    .order_by(ChatMessage.created_at)
+                )
+            )
+
+    @classmethod
+    def _wait_for_messages(cls, session_id, count, timeout=5.0):
+        deadline = time.monotonic() + timeout
+        rows: list = []
+        while time.monotonic() < deadline:
+            rows = cls._fetch_messages(session_id)
+            if len(rows) >= count:
+                return rows
+            time.sleep(0.01)
+        pytest.fail(f"expected {count} persisted messages, got {len(rows)}")
+
+    def test_stream_persists_user_and_assistant_messages(
+        self, monkeypatch, users, ready_store
+    ):
+        FakeStreamLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
+            response = stream_client.post("/chat/stream", json={"question": "cats?"})
+        assert response.status_code == 200
+        session_payload = json.loads(_parse_sse(response.text)[0][1])
+        assert session_payload["title"] == "cats?"
+        session_id = uuid.UUID(session_payload["session_id"])
+
+        rows = self._wait_for_messages(session_id, 2)
+        assert [row.role for row in rows] == [ChatRole.USER, ChatRole.ASSISTANT]
+        assert rows[0].content == "cats?"
+        assert rows[1].content == "hello from the fake stream"
+        assert rows[1].sources == [
+            {
+                "document_id": "a-doc",
+                "source": "a-doc.txt",
+                "chunk_index": 0,
+                "snippet": ("own text about cats " * 20)[:200] + "...",
+            },
+            {
+                "document_id": "a-doc",
+                "source": "a-doc.txt",
+                "chunk_index": 1,
+                "snippet": "second chunk about cats",
+            },
+        ]
+
+        with SessionLocal() as db:
+            session = db.get(ChatSession, session_id)
+        assert session is not None
+        assert session.user_id == users["a"].id
+        assert session.created_at <= session.updated_at
+
+    def test_stream_appends_to_existing_session(
+        self, monkeypatch, users, ready_store, db_session
+    ):
+        row = ChatSession(id=uuid.uuid4(), user_id=users["a"].id, title="already here")
+        db_session.add(row)
+        db_session.commit()
+        FakeStreamLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
+            one = stream_client.post(
+                "/chat/stream", json={"question": "first question", "session_id": str(row.id)}
+            )
+            two = stream_client.post(
+                "/chat/stream", json={"question": "second question", "session_id": str(row.id)}
+            )
+        assert one.status_code == two.status_code == 200
+        assert json.loads(_parse_sse(one.text)[0][1])["session_id"] == str(row.id)
+        assert json.loads(_parse_sse(two.text)[0][1])["session_id"] == str(row.id)
+
+        rows = self._wait_for_messages(row.id, 4)
+        questions = [r.content for r in rows if r.role == ChatRole.USER]
+        assert questions == ["first question", "second question"]
+        assert sum(1 for r in rows if r.role == ChatRole.ASSISTANT) == 2
+
+    def test_sync_chat_creates_session_and_saves_messages(
+        self, monkeypatch, users, ready_store
+    ):
+        FakeChatLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeChatLLM(reply="sync answer")) as sync_client:
+            response = sync_client.post("/chat", json={"question": "sync question"})
+        assert response.status_code == 200
+        body = response.json()
+        session_id = uuid.UUID(body["session_id"])
+
+        rows = self._wait_for_messages(session_id, 2)
+        assert rows[0].role == ChatRole.USER
+        assert rows[0].content == "sync question"
+        assert rows[1].role == ChatRole.ASSISTANT
+        assert rows[1].content == "sync answer"
+        assert [item["source"] for item in rows[1].sources] == ["a-doc.txt", "a-doc.txt"]
+
+    def test_chat_rejects_foreign_and_unknown_sessions(
+        self, monkeypatch, users, ready_store, db_session
+    ):
+        foreign = ChatSession(id=uuid.uuid4(), user_id=users["b"].id, title="b's")
+        db_session.add(foreign)
+        db_session.commit()
+        FakeChatLLM.calls = []
+        FakeStreamLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeChatLLM()) as sync_client:
+            foreign_sync = sync_client.post(
+                "/chat", json={"question": "cats", "session_id": str(foreign.id)}
+            )
+            unknown_sync = sync_client.post(
+                "/chat", json={"question": "cats", "session_id": str(uuid.uuid4())}
+            )
+            bad_id_sync = sync_client.post(
+                "/chat", json={"question": "cats", "session_id": "not-a-uuid"}
+            )
+        with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
+            foreign_stream = stream_client.post(
+                "/chat/stream", json={"question": "cats", "session_id": str(foreign.id)}
+            )
+            unknown_stream = stream_client.post(
+                "/chat/stream", json={"question": "cats", "session_id": str(uuid.uuid4())}
+            )
+        for response in (foreign_sync, unknown_sync, bad_id_sync, foreign_stream, unknown_stream):
+            assert response.status_code == 404
+            assert response.json()["detail"] == "Session not found"
+        assert not FakeChatLLM.calls and not FakeStreamLLM.calls
+
+    def test_no_ready_documents_reply_is_persisted(
+        self, monkeypatch, users, no_ready_store
+    ):
+        FakeStreamLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
+            response = stream_client.post("/chat/stream", json={"question": "cats"})
+        assert response.status_code == 200
+        session_id = uuid.UUID(json.loads(_parse_sse(response.text)[0][1])["session_id"])
+
+        rows = self._wait_for_messages(session_id, 2)
+        assert rows[0].role == ChatRole.USER
+        assert rows[1].role == ChatRole.ASSISTANT
+        assert rows[1].content == NO_DOCUMENTS_MESSAGE
+        assert rows[1].sources is None
+
+    def test_disconnect_saves_partial_text(self, monkeypatch, users, ready_store):
+        async def run_now(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        monkeypatch.setattr(chat_router, "run_in_threadpool", run_now)
+        monkeypatch.setattr(chat_router, "build_llm", lambda: FakeStreamLLM())
+        FakeStreamLLM.calls = []
+        session_id, _title = chat_router._resolve_session_and_save_user(
+            None, users["a"].id, "tell me about cats"
+        )
+
+        async def scenario():
+            stream = chat_router._chat_stream_events(
+                "tell me about cats", users["a"].id, session_id, "tell me about cats"
+            )
+            first = await stream.__anext__()
+            assert first.startswith("event: session")
+            second = await stream.__anext__()
+            assert second.startswith("event: sources")
+            third = await stream.__anext__()
+            assert third.startswith("event: token")
+            # The client vanishes here: the generator is closed mid-stream.
+            await stream.aclose()
+
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                rows = self._fetch_messages(session_id)
+                if any(row.role == ChatRole.ASSISTANT for row in rows):
+                    return rows
+                await asyncio.sleep(0.01)
+            pytest.fail("partial assistant message was never saved")
+
+        rows = asyncio.run(scenario())
+        assert [row.role for row in rows] == [ChatRole.USER, ChatRole.ASSISTANT]
+        assert rows[1].content == "hello "
+
+    def test_failed_save_does_not_break_stream(self, monkeypatch, users, ready_store):
+        def explode(*args, **kwargs):
+            raise RuntimeError("db exploded")
+
+        monkeypatch.setattr(chat_router, "_save_assistant_message", explode)
+        FakeStreamLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeStreamLLM()) as stream_client:
+            response = stream_client.post("/chat/stream", json={"question": "cats"})
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        names = [name for name, data in events]
+        assert names[0] == "session"
+        assert names[-1] == "done"
+        assert "error" not in names
+        token_text = "".join(json.loads(d)["text"] for n, d in events if n == "token")
+        assert token_text == "hello from the fake stream"
+        time.sleep(0.2)
+
+    def test_chat_bumps_recent_activity_ordering(
+        self, monkeypatch, users, ready_store, db_session
+    ):
+        from datetime import datetime, timedelta, timezone
+
+        stale = ChatSession(
+            id=uuid.uuid4(),
+            user_id=users["a"].id,
+            title="stale",
+            updated_at=datetime.now(timezone.utc) - timedelta(hours=1),
+        )
+        db_session.add(stale)
+        db_session.commit()
+        FakeChatLLM.calls = []
+        with _client(monkeypatch, users["a"], FakeChatLLM(reply="fresh")) as sync_client:
+            body = sync_client.post("/chat", json={"question": "what now?"}).json()
+        time.sleep(0.3)
+        with _client(monkeypatch, users["a"], FakeChatLLM(reply="fresh")) as sync_client:
+            session_listing = sync_client.get("/sessions").json()
+        assert session_listing[0]["id"] == body["session_id"]
+        assert session_listing[0]["title"] == "what now?"
+
+
+class TestTitleFromQuestion:
+    def test_short_question_untouched(self):
+        assert chat_router._title_from_question("what is a cat?") == "what is a cat?"
+
+    def test_whitespace_collapsed(self):
+        assert chat_router._title_from_question("  what   is \t a cat?\n ") == "what is a cat?"
+
+    def test_long_question_cut_at_word_boundary(self):
+        title = chat_router._title_from_question(" ".join(["word"] * 20))
+        assert len(title) < 60
+        assert title == " ".join(["word"] * 12)
+
+    def test_long_single_word_hard_cut(self):
+        title = chat_router._title_from_question("x" * 100)
+        assert len(title) == 60
