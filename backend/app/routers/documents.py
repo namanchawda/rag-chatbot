@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from ..config import get_settings
@@ -34,6 +34,15 @@ def upload_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
+    limit = get_settings().MAX_DOCUMENTS_PER_USER
+    owned = db.scalar(select(func.count()).select_from(Document).where(Document.user_id == current_user.id)) or 0
+    if owned >= limit:
+        # Quota first: reject before reading a byte of the file or saving it.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Document limit reached ({limit}). Delete one to upload another.",
+        )
+
     filename = file.filename or ""
     if not filename.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file provided")

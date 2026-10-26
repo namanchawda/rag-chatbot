@@ -1,15 +1,18 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
-import { ApiError } from "@/lib/api";
+import { ApiError, getPublicConfig } from "@/lib/api";
 import { Field, GlassCard, PrimaryButton, Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 type Mode = "signin" | "create";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The backend caps auth attempts per IP for one minute; without the header
+// we assume the same default the server uses.
+const DEFAULT_RETRY_SECONDS = 60;
 
 function friendlyError(error: unknown): string {
   if (error instanceof ApiError) {
@@ -33,6 +36,47 @@ export default function LoginPage() {
   }>({});
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // null = signups enabled (or /config unavailable: default to showing the toggle).
+  const [signupsClosed, setSignupsClosed] = useState<boolean>(false);
+  // Seconds left on an auth rate limit before the submit button re-enables.
+  const [countdown, setCountdown] = useState<number | null>(null);
+
+  const openSignups = useCallback(() => {
+    setSignupsClosed(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getPublicConfig()
+      .then((config) => {
+        if (cancelled) return;
+        const closed = !config.signups_enabled;
+        setSignupsClosed(closed);
+        if (closed) {
+          // Never leave someone staring at a form nobody can submit.
+          setMode((current) => (current === "create" ? "signin" : current));
+        }
+      })
+      .catch(() => {
+        // /config failing must not hide the toggle: opt back into showing it.
+        openSignups();
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [openSignups]);
+
+  // One second per step; the last effect run stops the chain at zero.
+  useEffect(() => {
+    if (countdown === null || countdown <= 0) return;
+    const timer = window.setTimeout(() => {
+      setCountdown((value) => {
+        const next = (value ?? 0) - 1;
+        return next <= 0 ? null : next;
+      });
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [countdown]);
 
   useEffect(() => {
     if (status === "authenticated") {
@@ -72,7 +116,15 @@ export default function LoginPage() {
       }
       router.replace("/dashboard");
     } catch (error) {
-      setServerError(friendlyError(error));
+      if (error instanceof ApiError && error.status === 429) {
+        // Show the server's text and block submits until the limit lifts.
+        setServerError(error.message);
+        setCountdown(error.retryAfter ?? DEFAULT_RETRY_SECONDS);
+      } else if (error instanceof ApiError && error.status === 403) {
+        setServerError(error.message);
+      } else {
+        setServerError(friendlyError(error));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -104,33 +156,43 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <div
-            className="mb-6 grid grid-cols-2 gap-1 rounded-xl bg-input p-1"
-            role="tablist"
-            aria-label="Authentication mode"
-          >
-            {(
-              [
-                ["signin", "Sign in"],
-                ["create", "Create account"],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                aria-selected={mode === value}
-                onClick={() => switchMode(value)}
-                className={`h-9 rounded-lg text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                  mode === value
-                    ? "bg-card text-foreground shadow-sm"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          {signupsClosed ? (
+            <p
+              role="status"
+              aria-live="polite"
+              className="mb-6 rounded-xl bg-input px-4 py-2.5 text-center text-sm text-muted"
+            >
+              Sign-ups are currently closed.
+            </p>
+          ) : (
+            <div
+              className="mb-6 grid grid-cols-2 gap-1 rounded-xl bg-input p-1"
+              role="tablist"
+              aria-label="Authentication mode"
+            >
+              {(
+                [
+                  ["signin", "Sign in"],
+                  ["create", "Create account"],
+                ] as const
+              ).map(([value, label]) => (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === value}
+                  onClick={() => switchMode(value)}
+                  className={`h-9 rounded-lg text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                    mode === value
+                      ? "bg-card text-foreground shadow-sm"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
             <Field
@@ -161,25 +223,44 @@ export default function LoginPage() {
               {serverError && (
                 <p className="rounded-xl bg-red-500/10 px-4 py-3 text-sm text-red-500">
                   {serverError}
+                  {countdown !== null && countdown > 0 && (
+                    <>
+                      {" "}
+                      Try again in {countdown}{" "}
+                      {countdown === 1 ? "second" : "seconds"}.
+                    </>
+                  )}
                 </p>
               )}
             </div>
 
-            <PrimaryButton type="submit" loading={submitting}>
-              {mode === "signin" ? "Sign in" : "Create account"}
+            <PrimaryButton
+              type="submit"
+              loading={submitting}
+              disabled={countdown !== null && countdown > 0}
+            >
+              {countdown !== null && countdown > 0
+                ? `Wait ${countdown}s`
+                : mode === "signin"
+                  ? "Sign in"
+                  : "Create account"}
             </PrimaryButton>
           </form>
 
-          <p className="mt-6 text-center text-sm text-muted">
-            {mode === "signin" ? "New here? " : "Already have an account? "}
-            <button
-              type="button"
-              onClick={() => switchMode(mode === "signin" ? "create" : "signin")}
-              className="font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            >
-              {mode === "signin" ? "Create an account" : "Sign in"}
-            </button>
-          </p>
+          {!signupsClosed && (
+            <p className="mt-6 text-center text-sm text-muted">
+              {mode === "signin" ? "New here? " : "Already have an account? "}
+              <button
+                type="button"
+                onClick={() =>
+                  switchMode(mode === "signin" ? "create" : "signin")
+                }
+                className="font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                {mode === "signin" ? "Create an account" : "Sign in"}
+              </button>
+            </p>
+          )}
         </GlassCard>
       </div>
     </main>

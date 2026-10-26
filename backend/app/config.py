@@ -28,6 +28,13 @@ class Settings(BaseSettings):
     RERANK_MIN_SCORE: float | None = None
     RERANK_LOG_SCORES: bool = False
     LOG_LEVEL: str = "INFO"
+    MAX_DOCUMENTS_PER_USER: int = 10
+    MAX_MESSAGES_PER_DAY: int = 50
+    STALE_PROCESSING_MINUTES: int = 30
+    AUTH_RATE_LIMIT_PER_MINUTE: int = 10
+    SIGNUPS_ENABLED: bool = True
+    TRUST_PROXY: bool = False
+    FRONTEND_ORIGINS: str = ""
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 

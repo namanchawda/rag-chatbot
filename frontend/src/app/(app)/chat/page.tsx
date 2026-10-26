@@ -52,6 +52,9 @@ type AssistantMessage = {
   sources: ChatSource[];
   state: AssistantState;
   errorMessage?: string;
+  // Set for "retrying cannot help" failures (e.g. the daily message limit):
+  // no Retry button is offered for that answer.
+  noRetry?: boolean;
 };
 
 type Message = UserMessage | AssistantMessage;
@@ -501,13 +504,25 @@ function ChatWorkspace() {
           router.replace("/login");
           return;
         }
-        patchAssistant({
-          state: "error",
-          errorMessage:
-            error instanceof ApiError
-              ? error.message
-              : "Something went wrong. Please try again.",
-        });
+        if (error instanceof ApiError && error.status === 429) {
+          // Daily message limit. The backend rejected the turn before any
+          // session or message row was created and before the stream
+          // started, so nothing is being saved for this question — show the
+          // server's text in the assistant bubble without a Retry button.
+          patchAssistant({
+            state: "error",
+            errorMessage: error.message,
+            noRetry: true,
+          });
+        } else {
+          patchAssistant({
+            state: "error",
+            errorMessage:
+              error instanceof ApiError
+                ? error.message
+                : "Something went wrong. Please try again.",
+          });
+        }
       } finally {
         if (requestIdRef.current === requestId) {
           abortRef.current = null;
@@ -544,7 +559,10 @@ function ChatWorkspace() {
     const lastAssistant = [...messages]
       .reverse()
       .find(
-        (message) => message.role === "assistant" && message.state === "error",
+        (message) =>
+          message.role === "assistant" &&
+          message.state === "error" &&
+          !message.noRetry,
       );
     if (lastAssistant?.role === "assistant" && lastAssistant.question) {
       void sendQuestion(lastAssistant.question);
@@ -575,7 +593,10 @@ function ChatWorkspace() {
   const lastAssistantError = [...messages]
     .reverse()
     .find(
-      (message) => message.role === "assistant" && message.state === "error",
+      (message) =>
+        message.role === "assistant" &&
+        message.state === "error" &&
+        !message.noRetry,
     );
 
   const isEmptyNewChat =

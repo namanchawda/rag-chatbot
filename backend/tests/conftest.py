@@ -52,6 +52,15 @@ class FakeVectorStore:
         self.deleted.append([str(i) for i in (ids or [])])
 
 
+@pytest.fixture(autouse=True)
+def _reset_auth_rate_limiter():
+    from app import rate_limit
+
+    rate_limit.reset()
+    yield
+    rate_limit.reset()
+
+
 @pytest.fixture()
 def db_session():
     Base.metadata.create_all(bind=engine)

@@ -157,8 +157,10 @@ def make_transport(handler) -> JinaReranker:
 
 
 def enable_rerank(monkeypatch, **overrides) -> None:
+    # RERANK_MIN_SCORE defaults to an open cutoff: the developer's real .env
+    # may carry a calibrated value, and tests opt into one explicitly.
     settings = get_settings().model_copy(
-        update={"RERANK_ENABLED": True, **overrides}
+        update={"RERANK_ENABLED": True, "RERANK_MIN_SCORE": None, **overrides}
     )
     monkeypatch.setattr(retrieve_module, "get_settings", lambda: settings)
 

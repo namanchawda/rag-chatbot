@@ -44,6 +44,13 @@ function plural(count: number, singular: string): string {
   return `${count} ${count === 1 ? singular : `${singular}s`}`;
 }
 
+// The backend marks uploads swept off during downtime with this text; a
+// friendly note explains the only cure (delete and re-upload), which
+// Delete already supports for failed documents.
+function isInterruptedUpload(error: string | null | undefined): boolean {
+  return error !== null && error !== undefined && error.includes("interrupted");
+}
+
 function StatusBadge({ document }: { document: DocumentItem }) {
   if (document.status === "processing") {
     return (
@@ -209,11 +216,19 @@ export default function DocumentsPage() {
           router.replace("/login");
           return;
         }
-        const detail =
-          error instanceof ApiError
-            ? error.message
-            : "Something went wrong. Please try again.";
-        setUploadError(`Couldn't upload "${currentFile}". ${detail}`);
+        if (error instanceof ApiError && error.status === 409) {
+          // Document quota reached: the server's own text, shown inline —
+          // no retry loop, and later files would conflict the same way, so
+          // the batch stops here.
+          setUploadError(error.message);
+          setLiveMessage(null);
+        } else {
+          const detail =
+            error instanceof ApiError
+              ? error.message
+              : "Something went wrong. Please try again.";
+          setUploadError(`Couldn't upload "${currentFile}". ${detail}`);
+        }
       } finally {
         setIsUploading(false);
         await loadDocuments();
@@ -475,11 +490,27 @@ export default function DocumentsPage() {
                       </div>
                     </div>
 
-                    {document.status === "failed" && document.error && (
-                      <p className="mt-2 text-sm text-red-600 dark:text-red-400">
-                        {document.error}
-                      </p>
-                    )}
+                    {document.status === "failed" &&
+                      isInterruptedUpload(document.error) && (
+                        <div
+                          role="status"
+                          className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5"
+                        >
+                          <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                            This upload was interrupted.
+                          </p>
+                          <p className="mt-0.5 text-sm text-amber-600 dark:text-amber-400">
+                            Delete it and upload again.
+                          </p>
+                        </div>
+                      )}
+                    {document.status === "failed" &&
+                      !isInterruptedUpload(document.error) &&
+                      document.error && (
+                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                          {document.error}
+                        </p>
+                      )}
 
                     {isConfirming && !isDeleting && (
                       <p className="mt-3 text-sm text-muted">

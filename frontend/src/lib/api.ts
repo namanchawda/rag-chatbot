@@ -1,3 +1,5 @@
+import { trackWakeRequest } from "@/lib/wake";
+
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -5,11 +7,13 @@ export const TOKEN_STORAGE_KEY = "rag_chatbot_token";
 
 export class ApiError extends Error {
   readonly status: number;
+  readonly retryAfter: number | undefined;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, retryAfter?: number) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -52,7 +56,10 @@ export function clearToken(): void {
   }
 }
 
-function extractErrorMessage(payload: unknown, fallback: string): string {
+export function extractErrorMessage(
+  payload: unknown,
+  fallback: string,
+): string {
   if (payload && typeof payload === "object" && "detail" in payload) {
     const detail = (payload as { detail: unknown }).detail;
     if (typeof detail === "string" && detail.trim().length > 0) return detail;
@@ -69,6 +76,13 @@ function extractErrorMessage(payload: unknown, fallback: string): string {
   return fallback;
 }
 
+function retryAfterSeconds(response: Response): number | undefined {
+  const raw = response.headers.get("Retry-After");
+  if (raw === null) return undefined;
+  const seconds = Number.parseInt(raw, 10);
+  return Number.isNaN(seconds) || seconds <= 0 ? undefined : seconds;
+}
+
 export type DocumentStatus = "processing" | "ready" | "failed";
 
 export type DocumentItem = {
@@ -80,6 +94,17 @@ export type DocumentItem = {
   created_at: string;
 };
 
+// A sleeping host may take up to a minute to answer, so there is NO
+// client-side fetch timeout: normal requests get effectively unlimited
+// headroom (far beyond 90s) and rely on the browser's own connection
+// timeouts instead of aborting mid-wake.
+const GET_RETRYABLE_STATUSES = new Set([502, 503, 504]);
+const GET_RETRY_DELAYS_MS = [1000, 2000, 4000];
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function apiRequest<T>(
   path: string,
   options: {
@@ -90,44 +115,80 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const { method = "GET", body, token } = options;
   const isFormData = body instanceof FormData;
+  // Never auto-retry POST/PATCH/DELETE (or anything but GET): they are not
+  // guaranteed idempotent, and a wake-up delay is not worth double effects.
+  const isGet = method === "GET";
+  const releaseWake = trackWakeRequest();
 
-  let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, {
-      method,
-      headers: {
-        ...(body !== undefined && !isFormData
-          ? { "Content-Type": "application/json" }
-          : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...(body !== undefined
-        ? { body: isFormData ? body : JSON.stringify(body) }
-        : {}),
-    });
-  } catch {
-    throw new ApiError(0, "Cannot reach the server. Check your connection and try again.");
-  }
+    let attempt = 0;
+    while (true) {
+      let response: Response;
+      try {
+        response = await fetch(`${API_URL}${path}`, {
+          method,
+          headers: {
+            ...(body !== undefined && !isFormData
+              ? { "Content-Type": "application/json" }
+              : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          ...(body !== undefined
+            ? { body: isFormData ? body : JSON.stringify(body) }
+            : {}),
+        });
+      } catch {
+        // Network error: idempotent GETs go again after a short backoff,
+        // up to three more tries.
+        if (isGet && attempt < GET_RETRY_DELAYS_MS.length) {
+          await wait(GET_RETRY_DELAYS_MS[attempt]);
+          attempt += 1;
+          continue;
+        }
+        throw new ApiError(
+          0,
+          "Cannot reach the server. Check your connection and try again.",
+        );
+      }
 
-  let payload: unknown = null;
-  const text = await response.text();
-  if (text.length > 0) {
-    try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = null;
+      // Cold host or gateway hiccup on an idempotent GET: retry silently.
+      if (
+        isGet &&
+        GET_RETRYABLE_STATUSES.has(response.status) &&
+        attempt < GET_RETRY_DELAYS_MS.length
+      ) {
+        await wait(GET_RETRY_DELAYS_MS[attempt]);
+        attempt += 1;
+        continue;
+      }
+
+      let payload: unknown = null;
+      const text = await response.text();
+      if (text.length > 0) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = null;
+        }
+      }
+
+      if (!response.ok) {
+        const fallback =
+          response.status === 401
+            ? "Invalid email or password"
+            : "Something went wrong. Please try again.";
+        throw new ApiError(
+          response.status,
+          extractErrorMessage(payload, fallback),
+          retryAfterSeconds(response),
+        );
+      }
+
+      return payload as T;
     }
+  } finally {
+    releaseWake();
   }
-
-  if (!response.ok) {
-    const fallback =
-      response.status === 401
-        ? "Invalid email or password"
-        : "Something went wrong. Please try again.";
-    throw new ApiError(response.status, extractErrorMessage(payload, fallback));
-  }
-
-  return payload as T;
 }
 
 export function login(email: string, password: string): Promise<AuthResponse> {
@@ -241,4 +302,13 @@ export function deleteSession(
     method: "DELETE",
     token,
   });
+}
+
+export type PublicConfig = {
+  signups_enabled: boolean;
+};
+
+// No auth: this endpoint exists precisely so the login page can ask it.
+export function getPublicConfig(): Promise<PublicConfig> {
+  return apiRequest<PublicConfig>("/config");
 }

@@ -1,4 +1,5 @@
-import { API_URL, ApiError } from "@/lib/api";
+import { API_URL, ApiError, extractErrorMessage } from "@/lib/api";
+import { trackWakeRequest } from "@/lib/wake";
 
 export type ChatSource = {
   document_id: string;
@@ -60,6 +61,9 @@ export async function streamChat(
   onEvent: (event: ChatEvent) => void,
   options: { sessionId?: string | null } = {},
 ): Promise<void> {
+  // Tracked from send until the HTTP response arrives (or it is aborted),
+  // exactly like every other request — one shared wake-up banner etc.
+  const releaseWake = trackWakeRequest();
   let response: Response;
   try {
     response = await fetch(`${API_URL}/chat/stream`, {
@@ -79,12 +83,15 @@ export async function streamChat(
       signal,
     });
   } catch (error) {
+    releaseWake();
     if ((error as Error).name === "AbortError") return;
     throw new ApiError(
       0,
       "Cannot reach the server. Check your connection and try again.",
     );
   }
+  // Headers are in: the server answered, so the banner has no further job.
+  releaseWake();
 
   if (response.status === 401) {
     // The page handles this by clearing the token and redirecting to login.
@@ -92,9 +99,19 @@ export async function streamChat(
   }
 
   if (!response.ok || !response.body) {
+    // Keep the server's own detail text (e.g. "Daily message limit reached
+    // (50). Try again tomorrow."); the UI shows it verbatim as the backend
+    // wrote it.
+    let message = "Something went wrong. Please try again.";
+    try {
+      const payload = (await response.json()) as unknown;
+      message = extractErrorMessage(payload, message);
+    } catch {
+      // Body was empty or not JSON: keep the fallback message.
+    }
     throw new ApiError(
       response.status,
-      "Something went wrong. Please try again.",
+      message,
     );
   }
 

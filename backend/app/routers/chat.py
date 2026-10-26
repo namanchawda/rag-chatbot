@@ -12,11 +12,12 @@ import asyncio
 import json
 import logging
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..config import get_settings
 from ..db import SessionLocal
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 _SNIPPET_CHARS = 200
 _TITLE_CHARS = 60
+_MESSAGE_WINDOW_HOURS = 24
 
 
 def _session_not_found() -> HTTPException:
@@ -73,6 +75,30 @@ def _title_from_question(question: str) -> str:
     if separator and boundary_cut:
         return boundary_cut
     return cut
+
+
+def _check_daily_message_cap(user_id: uuid.UUID) -> None:
+    """Reject when the caller's own user turns in the rolling 24h window
+    already reached MAX_MESSAGES_PER_DAY. Plain HTTP error, raised before any
+    session or message row is created and before the stream starts.
+    """
+    limit = get_settings().MAX_MESSAGES_PER_DAY
+    cutoff = _utcnow() - timedelta(hours=_MESSAGE_WINDOW_HOURS)
+    statement = (
+        select(func.count())
+        .select_from(ChatMessage)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .where(ChatSession.user_id == user_id)
+        .where(ChatMessage.role == ChatRole.USER)
+        .where(ChatMessage.created_at >= cutoff)
+    )
+    with SessionLocal() as session:
+        recent = int(session.scalar(statement) or 0)
+    if recent >= limit:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Daily message limit reached ({limit}). Try again tomorrow.",
+        )
 
 
 def _user_has_ready_documents(user_id: uuid.UUID) -> bool:
@@ -187,6 +213,7 @@ def _sources(chunks: list[RetrievedChunk]) -> list[dict]:
 def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) -> ChatResponse:
     """Answer one question from the caller's documents (for testing in /docs)."""
     question = _normalized_question(body.question)
+    _check_daily_message_cap(current_user.id)
     session_id, _title = _resolve_session_and_save_user(
         body.session_id, current_user.id, question
     )
@@ -304,6 +331,7 @@ async def chat_stream(
     """Server-Sent Events stream: session, sources, token..., done (or error)."""
 
     question = _normalized_question(body.question)
+    _check_daily_message_cap(current_user.id)
     # Resolve and persist the user turn up front, so a bad or foreign session
     # id is a clean 404 instead of an error event mid-stream.
     session_id, session_title = await run_in_threadpool(

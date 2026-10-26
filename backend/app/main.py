@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import get_settings
+from .config import Settings, get_settings
 from .db import create_tables
+from .maintenance import fail_stale_uploads
 from .rag.ingest import ensure_pgvector
 from .routers import auth, chat, documents, sessions
 
@@ -47,7 +48,25 @@ configure_logging()
 async def lifespan(_: FastAPI):
     ensure_pgvector()
     create_tables()
+    try:
+        fail_stale_uploads()
+    except Exception as error:  # noqa: BLE001 - startup must survive a sweep failure
+        logging.getLogger(__name__).warning(
+            "Startup upload sweep failed (%s); the app will still start",
+            type(error).__name__,
+        )
     yield
+
+
+def allowed_origins(settings: Settings) -> list[str]:
+    """Exact origins only - a rogue wildcard would open the API to any site."""
+    listed = [origin.strip() for origin in settings.FRONTEND_ORIGINS.split(",")]
+    origins = [origin for origin in listed if origin and origin != "*"]
+    if not origins:
+        fallback = settings.FRONTEND_ORIGIN.strip()
+        if fallback and fallback != "*":
+            origins = [fallback]
+    return origins
 
 
 def create_app() -> FastAPI:
@@ -55,7 +74,7 @@ def create_app() -> FastAPI:
     api = FastAPI(title="RAG Chatbot API", lifespan=lifespan)
     api.add_middleware(
         CORSMiddleware,
-        allow_origins=[settings.FRONTEND_ORIGIN],
+        allow_origins=allowed_origins(settings),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -68,6 +87,10 @@ def create_app() -> FastAPI:
     @api.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @api.get("/config")
+    def public_config() -> dict[str, bool]:
+        return {"signups_enabled": bool(get_settings().SIGNUPS_ENABLED)}
 
     return api
 
