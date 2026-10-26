@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     MAX_UPLOAD_MB: int = 25
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 150
+    GROQ_API_KEY: str
+    GROQ_MODEL: str
+    RETRIEVAL_TOP_K: int = 5
+    MAX_QUESTION_CHARS: int = 2000
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 

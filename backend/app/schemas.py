@@ -43,3 +43,19 @@ class AuthResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: UserResponse
+
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+class ChatSource(BaseModel):
+    document_id: str
+    source: str
+    chunk_index: int
+    snippet: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[ChatSource]

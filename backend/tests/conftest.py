@@ -15,6 +15,8 @@ os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["JWT_SECRET"] = "test-secret-key"
 os.environ["JINA_API_KEY"] = "test-jina-key"
 os.environ["FRONTEND_ORIGIN"] = "http://localhost:3000"
+os.environ["GROQ_API_KEY"] = "test-groq-key"
+os.environ["GROQ_MODEL"] = "test-groq-model"
 
 
 from app.db import Base, SessionLocal, engine  # noqa: E402

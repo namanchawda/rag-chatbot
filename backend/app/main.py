@@ -6,7 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .config import get_settings
 from .db import create_tables
 from .rag.ingest import ensure_pgvector
-from .routers import auth, documents
+from .routers import auth, chat, documents
 
 
 @asynccontextmanager
@@ -28,6 +28,7 @@ def create_app() -> FastAPI:
     )
     api.include_router(auth.router)
     api.include_router(documents.router)
+    api.include_router(chat.router)
 
     @api.get("/health")
     def health() -> dict[str, str]:
