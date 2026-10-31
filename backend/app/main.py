@@ -9,7 +9,7 @@ from .config import Settings, get_settings
 from .db import create_tables
 from .maintenance import fail_stale_uploads
 from .rag.ingest import ensure_pgvector
-from .routers import auth, chat, documents, sessions
+from .routers import auth, chat, chunks, documents, sessions
 
 _LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 
@@ -83,6 +83,7 @@ def create_app() -> FastAPI:
     api.include_router(documents.router)
     api.include_router(chat.router)
     api.include_router(sessions.router)
+    api.include_router(chunks.router)
 
     @api.get("/health")
     def health() -> dict[str, str]:
