@@ -32,6 +32,8 @@ from app.rag.rerank import JinaRerankError, JinaReranker
 from app.rag.retrieve import retrieve_reranked_chunks
 from app.routers import chat as chat_router
 
+from .test_chat import _parse_sse
+
 USER_A = uuid.UUID(int=1)
 USER_A_STR = str(USER_A)
 
@@ -573,3 +575,168 @@ class TestChatEndpointsWithRerank:
         assert set(names[2:-1]) == {"token"}
         assert "error" not in names
         assert FakeStreamLLM.calls
+
+
+class TestPerRequestRerankOption(TestChatEndpointsWithRerank):
+    """rerank in the body: null = server default, false = vector order with no
+    Jina call, true = the existing rerank flow - and the master switch always
+    wins. reranked is True only when reranking really ran."""
+
+    VECTOR_ORDER_SOURCES = [
+        (0, "doc-a"),  # candidate 0
+        (0, "doc-b"),  # candidate 1
+        (1, "doc-a"),  # candidate 2
+        (2, "doc-a"),  # candidate 3
+    ]
+
+    RERANKED_SOURCES = [
+        (1, "doc-a"),  # candidate 2 @ 0.9
+        (0, "doc-b"),  # candidate 1 @ 0.4
+        (0, "doc-a"),  # candidate 0 @ 0.15
+    ]
+
+    def test_chat_rerank_true_runs_reranker(self, monkeypatch, db_session):
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        enable_rerank(monkeypatch)
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeChatLLM(reply="ok")
+        )
+
+        response = test_client.post("/chat", json={"question": "cats", "rerank": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["reranked"] is True
+        assert [(s["chunk_index"], s["document_id"]) for s in body["sources"]] == self.RERANKED_SOURCES
+        assert len(reranker.queries) == 1
+
+    def test_chat_rerank_false_skips_reranker(self, monkeypatch, db_session):
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        enable_rerank(monkeypatch)
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeChatLLM(reply="ok")
+        )
+
+        response = test_client.post("/chat", json={"question": "cats", "rerank": False})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["reranked"] is False
+        assert [(s["chunk_index"], s["document_id"]) for s in body["sources"]] == self.VECTOR_ORDER_SOURCES
+        assert reranker.queries == [], "no Jina rerank call when rerank=false"
+
+    def test_chat_rerank_null_uses_server_default(self, monkeypatch, db_session):
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        enable_rerank(monkeypatch)  # master on => server default is to rerank
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeChatLLM(reply="ok")
+        )
+
+        response = test_client.post("/chat", json={"question": "cats", "rerank": None})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["reranked"] is True
+        assert len(reranker.queries) == 1
+
+    def test_chat_master_switch_overrides_true_request(self, monkeypatch, db_session):
+        settings = get_settings().model_copy(
+            update={"RERANK_ENABLED": False, "RERANK_MIN_SCORE": None}
+        )
+        monkeypatch.setattr(retrieve_module, "get_settings", lambda: settings)
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeChatLLM(reply="ok")
+        )
+
+        response = test_client.post("/chat", json={"question": "cats", "rerank": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["reranked"] is False
+        assert [(s["chunk_index"], s["document_id"]) for s in body["sources"]] == self.VECTOR_ORDER_SOURCES
+        assert reranker.queries == [], "the RERANK_ENABLED=false master switch wins"
+
+    def test_chat_rerank_failure_falls_back_and_reports_reranked_false(
+        self, monkeypatch, db_session
+    ):
+        reranker = ScriptedReranker(error=RuntimeError("503"))
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        enable_rerank(monkeypatch)
+        FakeChatLLM.calls = []
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeChatLLM(reply="ok")
+        )
+
+        response = test_client.post("/chat", json={"question": "cats", "rerank": True})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["reranked"] is False
+        assert [(s["chunk_index"], s["document_id"]) for s in body["sources"]] == self.VECTOR_ORDER_SOURCES
+        assert FakeChatLLM.calls, "the fallback still answers from vector order"
+        assert len(reranker.queries) == 1, "the rerank call was attempted"
+
+    def test_stream_sources_event_carries_reranked_flag(self, monkeypatch, db_session):
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        enable_rerank(monkeypatch)
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeStreamLLM()
+        )
+
+        for requested, expected_flag, expected_order in (
+            (True, True, self.RERANKED_SOURCES),
+            (False, False, self.VECTOR_ORDER_SOURCES),
+            (None, True, self.RERANKED_SOURCES),
+        ):
+            payload = {"question": "cats"}
+            if requested is not None:
+                payload["rerank"] = requested
+            response = test_client.post("/chat/stream", json=payload)
+            assert response.status_code == 200
+            events = _parse_sse(response.text)
+            names = [name for name, _ in events]
+            # Event order unchanged: session, sources, token..., done.
+            assert names[0] == "session"
+            assert names[1] == "sources"
+            assert names[-1] == "done"
+            assert set(names[2:-1]) == {"token"}
+            _, data = events[1]
+            sources_payload = json.loads(data)
+            assert sources_payload["reranked"] is expected_flag
+            assert [
+                (s["chunk_index"], s["document_id"]) for s in sources_payload["sources"]
+            ] == expected_order
+
+    def test_stream_master_switch_forces_reranked_false(self, monkeypatch, db_session):
+        settings = get_settings().model_copy(
+            update={"RERANK_ENABLED": False, "RERANK_MIN_SCORE": None}
+        )
+        monkeypatch.setattr(retrieve_module, "get_settings", lambda: settings)
+        reranker = ScriptedReranker(results=[(2, 0.9), (1, 0.4), (0, 0.15)])
+        monkeypatch.setattr(
+            rerank_module, "JinaReranker", lambda *args, **kwargs: reranker
+        )
+        test_client = self._setup_endpoint(
+            monkeypatch, db_session, FakeStreamLLM()
+        )
+
+        response = test_client.post("/chat/stream", json={"question": "cats", "rerank": True})
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        sources_payload = json.loads([data for name, data in events if name == "sources"][0])
+        assert sources_payload["reranked"] is False
+        assert [(s["chunk_index"], s["document_id"]) for s in sources_payload["sources"]] == self.VECTOR_ORDER_SOURCES
+        assert reranker.queries == []

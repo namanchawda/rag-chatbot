@@ -47,12 +47,11 @@ def upload_document(
     if not filename.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file provided")
 
-    # Reject overlong extensions early; the real size check happens after reading.
     suffix = Path(filename).suffix.casefold()
     if suffix not in SUPPORTED_SUFFIXES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type '{suffix}'. Supported types: .pdf, .txt, .md, .html",
+            detail=f"Unsupported file type '{suffix}'. Supported type: .pdf",
         )
 
     max_bytes = get_settings().MAX_UPLOAD_MB * 1024 * 1024
@@ -72,6 +71,14 @@ def upload_document(
                         detail=f"File exceeds the {get_settings().MAX_UPLOAD_MB} MB upload limit",
                     )
                 buffer.write(piece)
+        # Content sniffing: a renamed MIME type is not proof of a real PDF.
+        with open(temp_path, "rb") as probe:
+            magic = probe.read(5)
+        if magic != b"%PDF-":
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail="This file is not a valid PDF. Only real PDF files are accepted.",
+            )
     except Exception:
         Path(temp_path).unlink(missing_ok=True)
         raise

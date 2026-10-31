@@ -55,7 +55,7 @@ def _top_scores(store, questions_with_scores, monkeypatch):
     enable_rerank(monkeypatch)
     tops = []
     for scores in questions_with_scores:
-        scored = retrieve_scored_candidates(
+        scored, _ = retrieve_scored_candidates(
             "unused question", USER_A, store=store, reranker=_mock_reranker(scores)
         )
         assert all(score is not None for _, score in scored)
@@ -71,7 +71,7 @@ class TestRetrieveScoredCandidates:
         # the calibration helper.
         enable_rerank(monkeypatch, RERANK_MIN_SCORE=0.9)
         store = _store()
-        scored = retrieve_scored_candidates(
+        scored, _ = retrieve_scored_candidates(
             "q", USER_A, store=store, reranker=_mock_reranker([0.5, 0.2, 0.4, -0.1])
         )
         assert [score for _, score in scored] == [0.5, 0.4, 0.2, -0.1]

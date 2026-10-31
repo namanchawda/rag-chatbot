@@ -136,12 +136,20 @@ class TestDocumentCap:
         db_session.add(theirs)
         db_session.commit()
 
+        import fitz
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_textbox(fitz.Rect(50, 50, 540, 790), "Integration PDF body")
+        data = doc.tobytes()
+        doc.close()
+
         app = create_app()
         app.dependency_overrides[get_current_user] = lambda: users["a"]
         with TestClient(app) as client:
             response = client.post(
                 "/documents",
-                files={"file": ("notes.txt", b"hello content", "text/plain")},
+                files={"file": ("notes.pdf", data, "application/pdf")},
             )
         assert response.status_code == 202
         assert store.added  # ingestion actually ran for the upload
@@ -301,16 +309,33 @@ class TestSignupToggle:
         assert response.status_code == 201
         assert response.json()["user"]["email"] == "fresh@example.com"
 
-    def test_config_endpoint_exposes_only_the_flag(self, monkeypatch):
+    def test_config_endpoint_exposes_public_values(self, monkeypatch):
+        _settings_patch(
+            monkeypatch, main_module, SIGNUPS_ENABLED=True, RERANK_ENABLED=True, MAX_UPLOAD_MB=25
+        )
         with TestClient(create_app()) as client:
             opened = client.get("/config")
         assert opened.status_code == 200
-        assert opened.json() == {"signups_enabled": True}
+        assert opened.json() == {
+            "signups_enabled": True,
+            "max_upload_mb": 25,
+            "allowed_extensions": [".pdf"],
+            "rerank_available": True,
+            "rerank_default": True,
+        }
 
-        _settings_patch(monkeypatch, main_module, SIGNUPS_ENABLED=False)
+        _settings_patch(
+            monkeypatch, main_module, SIGNUPS_ENABLED=False, RERANK_ENABLED=False, MAX_UPLOAD_MB=13
+        )
         with TestClient(create_app()) as client:
             closed = client.get("/config")
-        assert closed.json() == {"signups_enabled": False}
+        assert closed.json() == {
+            "signups_enabled": False,
+            "max_upload_mb": 13,
+            "allowed_extensions": [".pdf"],
+            "rerank_available": False,
+            "rerank_default": False,
+        }
 
 
 class TestCorsOrigins:

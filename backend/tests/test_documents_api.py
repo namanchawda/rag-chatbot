@@ -1,7 +1,10 @@
 """Endpoint tests for /documents with faked auth and a faked vector store."""
 
+import os
+import tempfile
 import uuid
 
+import fitz
 import pytest
 from fastapi.testclient import TestClient
 
@@ -12,6 +15,17 @@ from app.models import DocumentStatus
 from app.rag import ingest as ingest_module
 
 from .conftest import FakeVectorStore
+
+
+def pdf_bytes(*, text: str | None = "Hello PDF body") -> bytes:
+    """A tiny real PDF (with text unless asked otherwise), as upload payload."""
+    doc = fitz.open()
+    page = doc.new_page()
+    if text:
+        page.insert_textbox(fitz.Rect(50, 50, 540, 790), text)
+    data = doc.tobytes()
+    doc.close()
+    return data
 
 
 @pytest.fixture()
@@ -33,16 +47,16 @@ class TestUpload:
         test_client, _ = client
         response = test_client.post(
             "/documents",
-            files={"file": ("notes.txt", b"hello content", "text/plain")},
+            files={"file": ("report.pdf", pdf_bytes(), "application/pdf")},
         )
         assert response.status_code == 202
         body = response.json()
-        assert body["filename"].endswith("notes.txt") or body["filename"] == "notes.txt"
+        assert body["filename"].endswith("report.pdf") or body["filename"] == "report.pdf"
         assert body["status"] == "processing"
         # BackgroundTasks run before TestClient returns: the row is already done.
         assert body["status"] in {"processing", "ready"}
 
-    def test_rejects_unsupported_extension(self, client, users):
+    def test_rejects_non_pdf_extension(self, client, users):
         test_client, _ = client
         response = test_client.post(
             "/documents",
@@ -50,6 +64,30 @@ class TestUpload:
         )
         assert response.status_code == 415
         assert ".docx" in response.json()["detail"]
+
+    def test_rejects_txt_upload(self, client, users):
+        test_client, _ = client
+        response = test_client.post(
+            "/documents",
+            files={"file": ("notes.txt", b"plain text", "text/plain")},
+        )
+        assert response.status_code == 415
+        detail = response.json()["detail"]
+        assert ".txt" in detail and ".pdf" in detail
+
+    def test_rejects_fake_pdf_without_magic_header_and_deletes_temp(
+        self, client, users, monkeypatch
+    ):
+        test_client, _ = client
+        temp_dir = tempfile.mkdtemp()
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: temp_dir)
+        response = test_client.post(
+            "/documents",
+            files={"file": ("trojan.pdf", b"MZ" + b"\x00" * 200, "application/pdf")},
+        )
+        assert response.status_code == 415
+        assert "not a valid PDF" in response.json()["detail"]
+        assert os.listdir(temp_dir) == [], "temp file must always be deleted"
 
     def test_rejects_oversize_upload(self, client, users, monkeypatch):
         test_client, _ = client
@@ -60,7 +98,7 @@ class TestUpload:
         monkeypatch.setattr(documents_router, "get_settings", lambda: tiny_limit)
         response = test_client.post(
             "/documents",
-            files={"file": ("notes.txt", b"any content", "text/plain")},
+            files={"file": ("report.pdf", b"%PDF-" + b"any content", "application/pdf")},
         )
         assert response.status_code == 413
         assert "limit" in response.json()["detail"]

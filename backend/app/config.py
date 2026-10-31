@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     JINA_EMBEDDING_MODEL: str = "jina-embeddings-v5-omni-small"
     EMBEDDING_DIMENSION: int = 1024
     MAX_UPLOAD_MB: int = 25
+    MAX_PDF_PAGES: int = 300
+    MAX_CHUNKS_PER_DOCUMENT: int = 1500
+    MAX_TOTAL_CHUNKS_PER_USER: int = 3000
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 150
     GROQ_API_KEY: str

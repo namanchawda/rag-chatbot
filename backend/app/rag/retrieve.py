@@ -93,13 +93,28 @@ def _log_scores(
     )
 
 
+def resolve_rerank(requested: bool | None) -> bool:
+    """Effective reranking decision for one request.
+
+    RERANK_ENABLED=false is the master switch: it forces reranking off no
+    matter what the caller asked for. Otherwise a request value wins, and
+    None (or an omitted field) falls back to the server default, which is
+    the master switch itself.
+    """
+    settings = get_settings()
+    if not settings.RERANK_ENABLED:
+        return False
+    return settings.RERANK_ENABLED if requested is None else bool(requested)
+
+
 def retrieve_scored_candidates(
     question: str,
     user_id: uuid.UUID | str,
     store=None,
     *,
     reranker=None,
-) -> list[tuple[RetrievedChunk, float | None]]:
+    rerank: bool | None = None,
+) -> tuple[list[tuple[RetrievedChunk, float | None]], bool]:
     """Every candidate paired with its rerank relevance score.
 
     Identical retrieval path as production (same store built by
@@ -107,9 +122,10 @@ def retrieve_scored_candidates(
     top_n slicing: every candidate keeps its score so RERANK_MIN_SCORE can
     be calibrated against observed values.
 
-    When RERANK_ENABLED is off, or when the rerank call fails, scores are
-    None and candidates keep vector order - the fallback production falls
-    back to as well.
+    The optional `rerank` argument is the per-request option; see
+    resolve_rerank. Candidates are returned in vector order with None scores
+    and a False flag when reranking is off or when the rerank call failed -
+    the fallback production falls back to as well.
     """
     settings = get_settings()
     candidates = retrieve_chunks(
@@ -119,9 +135,9 @@ def retrieve_scored_candidates(
         top_k=settings.RETRIEVAL_CANDIDATES,
     )
     if not candidates:
-        return []
-    if not settings.RERANK_ENABLED:
-        return [(chunk, None) for chunk in candidates]
+        return [], False
+    if not resolve_rerank(rerank):
+        return [(chunk, None) for chunk in candidates], False
 
     try:
         if reranker is None:
@@ -136,18 +152,38 @@ def retrieve_scored_candidates(
             "Reranking failed (%s); falling back to vector order",
             type(error).__name__,
         )
-        return [(chunk, None) for chunk in candidates]
+        return [(chunk, None) for chunk in candidates], False
 
     if settings.RERANK_LOG_SCORES:
         _log_scores(question, candidates, scored)
 
     # Map by index, never by position: the API returns results in relevance
     # order, which is unrelated to the candidate order we sent.
-    return [
+    ranked = [
         (candidates[index], score)
         for index, score in sorted(scored, key=lambda pair: pair[1], reverse=True)
         if 0 <= index < len(candidates)
     ]
+    return ranked, True
+
+
+def _final_chunks(
+    scored: list[tuple[RetrievedChunk, float | None]],
+    reranked: bool,
+) -> list[RetrievedChunk]:
+    """Cutoff and RERANK_TOP_N slicing, only when real scores exist."""
+    if not scored:
+        return []
+    settings = get_settings()
+    top_n = settings.RERANK_TOP_N
+    if reranked:
+        cutoff = settings.RERANK_MIN_SCORE
+        scored = [
+            (chunk, score)
+            for chunk, score in scored
+            if score is not None and (cutoff is None or score >= cutoff)
+        ]
+    return [chunk for chunk, _ in scored[:top_n]]
 
 
 def retrieve_reranked_chunks(
@@ -156,6 +192,7 @@ def retrieve_reranked_chunks(
     store=None,
     *,
     reranker=None,
+    rerank: bool | None = None,
 ) -> list[RetrievedChunk]:
     """Fetch candidates, optionally rerank them, and return the final set.
 
@@ -165,22 +202,35 @@ def retrieve_reranked_chunks(
     An empty return value means "nothing relevant found" and callers must
     skip the LLM entirely.
     """
-    scored = retrieve_scored_candidates(
+    chunks, _ = retrieve_reranked_result(
         question,
         user_id,
         store=store,
         reranker=reranker,
+        rerank=rerank,
     )
-    if not scored:
-        return []
+    return chunks
 
-    settings = get_settings()
-    top_n = settings.RERANK_TOP_N
-    if any(score is not None for _, score in scored):
-        cutoff = settings.RERANK_MIN_SCORE
-        scored = [
-            (chunk, score)
-            for chunk, score in scored
-            if score is not None and (cutoff is None or score >= cutoff)
-        ]
-    return [chunk for chunk, _ in scored[:top_n]]
+
+def retrieve_reranked_result(
+    question: str,
+    user_id: uuid.UUID | str,
+    store=None,
+    *,
+    reranker=None,
+    rerank: bool | None = None,
+) -> tuple[list[RetrievedChunk], bool]:
+    """Final chunk set plus whether reranking really ran.
+
+    reranked is True only when rerank actually executed and produced scores;
+    it is False when the option is off, overridden by the master switch, or
+    when a rerank failure fell back to vector order.
+    """
+    scored, reranked = retrieve_scored_candidates(
+        question,
+        user_id,
+        store=store,
+        reranker=reranker,
+        rerank=rerank,
+    )
+    return _final_chunks(scored, reranked), reranked

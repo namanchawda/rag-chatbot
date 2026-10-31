@@ -50,6 +50,8 @@ class AuthResponse(BaseModel):
 class ChatRequest(BaseModel):
     question: str
     session_id: str | None = None
+    # Per-request rerank option; None means the server default.
+    rerank: bool | None = None
 
 
 class ChatSource(BaseModel):
@@ -63,6 +65,8 @@ class ChatResponse(BaseModel):
     answer: str
     sources: list[ChatSource]
     session_id: str
+    # True only when reranking really ran; False when disabled or in fallback.
+    reranked: bool = False
 
 
 class SessionCreate(BaseModel):

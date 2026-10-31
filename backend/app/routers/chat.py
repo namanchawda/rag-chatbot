@@ -31,7 +31,7 @@ from ..rag.chat import (
     friendly_error,
     make_chain,
 )
-from ..rag.retrieve import RetrievedChunk, retrieve_reranked_chunks
+from ..rag.retrieve import RetrievedChunk, retrieve_reranked_result
 from ..schemas import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -219,12 +219,16 @@ def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) 
     )
 
     sources: list[dict] = []
+    reranked = False
     if not _user_has_ready_documents(current_user.id):
         answer = NO_DOCUMENTS_MESSAGE
     else:
-        chunks = retrieve_reranked_chunks(question, current_user.id)
+        chunks, reranked = retrieve_reranked_result(
+            question, current_user.id, rerank=body.rerank
+        )
         if not chunks:
             answer = NO_RESULTS_MESSAGE
+            reranked = False
         else:
             sources = _sources(chunks)
             try:
@@ -238,7 +242,12 @@ def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) 
                 )
 
     _persist_safely(session_id, current_user.id, answer, sources)
-    return ChatResponse(answer=answer, sources=sources, session_id=str(session_id))
+    return ChatResponse(
+        answer=answer,
+        sources=sources,
+        session_id=str(session_id),
+        reranked=reranked,
+    )
 
 
 def _sse(event: str, data) -> str:
@@ -250,6 +259,7 @@ async def _chat_stream_events(
     user_id: uuid.UUID,
     session_id: uuid.UUID,
     session_title: str,
+    rerank: bool | None = None,
 ):
     """SSE body: session, sources, token..., done (or error).
 
@@ -259,6 +269,7 @@ async def _chat_stream_events(
     """
     text_parts: list[str] = []
     sources: list[dict] = []
+    reranked = False
     saved = False
 
     def _schedule_persist() -> None:
@@ -283,7 +294,7 @@ async def _chat_stream_events(
             return
 
         if not has_ready:
-            yield _sse("sources", {"sources": []})
+            yield _sse("sources", {"sources": [], "reranked": False})
             text_parts.append(NO_DOCUMENTS_MESSAGE)
             yield _sse("token", {"text": NO_DOCUMENTS_MESSAGE})
             yield _sse("done", {"status": "ok"})
@@ -292,14 +303,16 @@ async def _chat_stream_events(
         try:
             # The blocking embed + SQL call happens in a worker thread so the
             # event loop stays free.
-            chunks = await run_in_threadpool(retrieve_reranked_chunks, question, user_id)
+            chunks, reranked = await run_in_threadpool(
+                retrieve_reranked_result, question, user_id, store=None, rerank=rerank
+            )
         except Exception:  # noqa: BLE001
             logger.exception("Retrieval failed for user %s", user_id)
             yield _sse("error", {"error": "Could not search your documents. Please try again."})
             return
 
         sources = _sources(chunks)
-        yield _sse("sources", {"sources": sources})
+        yield _sse("sources", {"sources": sources, "reranked": reranked})
 
         if not chunks:
             text_parts.append(NO_RESULTS_MESSAGE)
@@ -343,7 +356,9 @@ async def chat_stream(
         "X-Accel-Buffering": "no",
     }
     return StreamingResponse(
-        _chat_stream_events(question, current_user.id, session_id, session_title),
+        _chat_stream_events(
+            question, current_user.id, session_id, session_title, rerank=body.rerank
+        ),
         media_type="text/event-stream",
         headers=headers,
     )

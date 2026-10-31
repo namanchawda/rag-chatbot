@@ -171,7 +171,7 @@ def run_groups(
             if not first:
                 time.sleep(_SLEEP_BETWEEN_QUESTIONS_SECONDS)
             first = False
-            scored = retrieve_scored_candidates(question, user_id)
+            scored, _ = retrieve_scored_candidates(question, user_id)
             ordered = sorted(
                 scored,
                 key=lambda pair: pair[1] if pair[1] is not None else float("-inf"),

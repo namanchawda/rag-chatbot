@@ -26,57 +26,51 @@ from app.rag.ingest import (
 from .conftest import FakeEmbeddings, FakeVectorStore, make_jina_response
 
 
-def _write_temp(suffix: str, content: bytes | str) -> str:
-    descriptor, temp_path = tempfile.mkstemp(suffix=suffix)
-    with os.fdopen(descriptor, "wb") as handle:
-        if isinstance(content, bytes):
-            handle.write(content)
-        else:
-            handle.write(content.encode("utf-8"))
+def _write_temp_pdf(text: str | None = "Hello PDF body", pages: int = 1) -> str:
+    """A real PDF written to a temp path, optionally textless or multi-page."""
+    import fitz
+
+    doc = fitz.open()
+    for _ in range(pages):
+        page = doc.new_page()
+        if text:
+            # insert_text (not insert_textbox): long single-line text never
+            # overflows the box and silently disappears.
+            page.insert_text((50, 100), text, fontsize=6)
+    descriptor, temp_path = tempfile.mkstemp(suffix=".pdf")
+    os.close(descriptor)
+    doc.save(temp_path)
+    doc.close()
     return temp_path
 
 
+class _RecordingEmbeddings(FakeEmbeddings):
+    """Counts embed calls so tests can prove no tokens were spent."""
+
+    def __init__(self) -> None:
+        self.embed_calls = 0
+
+    def embed_documents(self, texts):
+        self.embed_calls += 1
+        return super().embed_documents(texts)
+
+
+class _EmbeddingVectorStore(FakeVectorStore):
+    """Fake PGVector that, like the real one, embeds before storing."""
+
+    def __init__(self, embeddings) -> None:
+        super().__init__()
+        self.embeddings = embeddings
+
+    def add_documents(self, documents, **kwargs):
+        if self.embeddings is not None:
+            self.embeddings.embed_documents([document.page_content for document in documents])
+        return super().add_documents(documents, **kwargs)
+
+
 class TestLoaders:
-    def test_load_txt(self):
-        path = _write_temp(".txt", "hello world")
-        try:
-            documents = load_document(path, "notes.txt")
-            assert len(documents) == 1
-            assert "hello world" in documents[0].page_content
-        finally:
-            Path(path).unlink()
-
-    def test_load_md_falls_back_on_encoding(self):
-        latin = b"caf\xe9 r\xe9sum\xe9 " * 20  # valid latin-1, invalid UTF-8
-        path = _write_temp(".md", latin)
-        try:
-            documents = load_document(path, "readme.md")
-            assert documents
-            assert "caf" in documents[0].page_content
-        finally:
-            Path(path).unlink()
-
-    def test_load_html(self):
-        path = _write_temp(
-            ".html", "<html><body><p>Document<i>body text</i></p></body></html>"
-        )
-        try:
-            documents = load_document(path, "page.html")
-            text = " ".join(document.page_content for document in documents)
-            assert "Document" in text
-        finally:
-            Path(path).unlink()
-
     def test_load_pdf(self):
-        import fitz
-
-        pdf = fitz.open()
-        page = pdf.new_page()
-        page.insert_text((72, 72), "Real PDF text from fitz")
-        descriptor, temp_path = tempfile.mkstemp(suffix=".pdf")
-        os.close(descriptor)
-        pdf.save(temp_path)
-        pdf.close()
+        temp_path = _write_temp_pdf("Real PDF text from fitz")
         try:
             documents = load_document(temp_path, "report.pdf")
             text = " ".join(document.page_content for document in documents)
@@ -85,13 +79,73 @@ class TestLoaders:
             Path(temp_path).unlink()
 
     def test_load_rejects_unsupported_type(self):
-        path = _write_temp(".docx", "not really docx")
+        path = _write_temp_pdf()
         try:
             with pytest.raises(UnsupportedFileTypeError) as error:
                 load_document(path, "file.docx")
             assert ".docx" in str(error.value)
+            assert ".pdf" in str(error.value)
         finally:
             Path(path).unlink()
+
+    def test_load_rejects_txt_and_html(self):
+        path = _write_temp_pdf()
+        try:
+            for filename in ("notes.txt", "readme.md", "page.html"):
+                with pytest.raises(UnsupportedFileTypeError) as error:
+                    load_document(path, filename)
+                assert filename.rsplit(".", 1)[-1] in str(error.value)
+        finally:
+            Path(path).unlink()
+
+    def test_page_cap_fails_with_friendly_error(self, monkeypatch):
+        settings = get_settings().model_copy(update={"MAX_PDF_PAGES": 1})
+        monkeypatch.setattr(ingest_module, "get_settings", lambda: settings)
+        temp_path = _write_temp_pdf("page one and two", pages=2)
+        try:
+            with pytest.raises(ingest_module.PdfTooManyPagesError) as error:
+                load_document(temp_path, "big.pdf")
+            assert "2 pages" in str(error.value)
+            assert "1 page limit" in str(error.value)
+            assert "Traceback" not in str(error.value)
+        finally:
+            Path(temp_path).unlink()
+
+    def test_scanned_pdf_fails_with_friendly_error(self):
+        temp_path = _write_temp_pdf(text=None)
+        try:
+            with pytest.raises(ingest_module.ScannedPdfError) as error:
+                load_document(temp_path, "scan.pdf")
+            assert str(error.value) == "No readable text found. Scanned PDFs aren't supported."
+        finally:
+            Path(temp_path).unlink()
+
+    def test_encrypted_pdf_fails_with_friendly_error(self):
+        import fitz
+
+        doc = fitz.open()
+        page = doc.new_page()
+        page.insert_textbox(fitz.Rect(50, 50, 540, 790), "secret")
+        descriptor, temp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(descriptor)
+        doc.save(
+            temp_path,
+            encryption=fitz.PDF_ENCRYPT_AES_256,
+            owner_pw="o",
+            user_pw="u",
+            permissions=-1,
+        )
+        doc.close()
+        try:
+            probe = fitz.open(temp_path)
+            assert probe.needs_pass
+            probe.close()
+            with pytest.raises(ingest_module.EncryptedPdfError) as error:
+                load_document(temp_path, "locked.pdf")
+            assert "password" in str(error.value)
+            assert "Traceback" not in str(error.value)
+        finally:
+            Path(temp_path).unlink()
 
 
 class TestSplitterAndMetadata:
@@ -135,9 +189,10 @@ class _SessionFactory:
 
 class TestIngestJob:
     def test_success_marks_ready_and_deletes_temp(self, users, monkeypatch):
-        store = FakeVectorStore()
+        embeddings = _RecordingEmbeddings()
+        store = _EmbeddingVectorStore(embeddings)
         monkeypatch.setattr(ingest_module, "build_vectorstore", lambda embeddings=None: store)
-        temp_path = _write_temp(".txt", "alpha beta " * 500)
+        temp_path = _write_temp_pdf("alpha beta " * 500)
         assert Path(temp_path).exists()
 
         document_id = uuid.uuid4()
@@ -145,7 +200,7 @@ class TestIngestJob:
             DocumentRow(
                 id=document_id,
                 user_id=users["a"].id,
-                filename="notes.txt",
+                filename="notes.pdf",
                 status=DocumentStatus.PROCESSING,
             )
         )
@@ -153,9 +208,9 @@ class TestIngestJob:
         ingest_document(
             str(document_id),
             temp_path,
-            "notes.txt",
+            "notes.pdf",
             str(users["a"].id),
-            embeddings_factory=FakeEmbeddings,
+            embeddings_factory=lambda: embeddings,
             session_factory=_SessionFactory(users["session"]),
         )
 
@@ -165,16 +220,18 @@ class TestIngestJob:
         assert row.chunk_count > 0
         assert row.error is None
         assert store.added, "chunks were not added to the store"
+        assert embeddings.embed_calls == row.chunk_count > 0
         first_chunk = store.added[0][0]
         assert first_chunk.metadata["document_id"] == str(document_id)
-        assert first_chunk.metadata["source"] == "notes.txt"
+        assert first_chunk.metadata["source"] == "notes.pdf"
         assert first_chunk.metadata["chunk_index"] == 0
         assert not Path(temp_path).exists(), "temp file was not deleted after ingestion"
 
     def test_failure_marks_failed_and_still_deletes_temp(self, users, monkeypatch):
-        store = FakeVectorStore()
+        embeddings = _RecordingEmbeddings()
+        store = _EmbeddingVectorStore(embeddings)
         monkeypatch.setattr(ingest_module, "build_vectorstore", lambda embeddings=None: store)
-        temp_path = _write_temp(".txt", "will never load")
+        temp_path = _write_temp_pdf("will never load")
 
         row = DocumentRow(
             id=uuid.uuid4(),
@@ -190,7 +247,7 @@ class TestIngestJob:
             temp_path,
             "broken.docx",
             str(users["a"].id),
-            embeddings_factory=FakeEmbeddings,
+            embeddings_factory=lambda: embeddings,
             session_factory=_SessionFactory(users["session"]),
         )
 
@@ -199,6 +256,7 @@ class TestIngestJob:
         assert failed_row.chunk_count == 0
         assert "Unsupported file type" in (failed_row.error or "")
         assert not store.added, "nothing should reach the store after loading fails"
+        assert embeddings.embed_calls == 0, "the embedder must never run after loading fails"
         assert not Path(temp_path).exists(), "temp file must be deleted even when ingestion fails"
 
 

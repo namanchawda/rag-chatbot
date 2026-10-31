@@ -89,8 +89,15 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @api.get("/config")
-    def public_config() -> dict[str, bool]:
-        return {"signups_enabled": bool(get_settings().SIGNUPS_ENABLED)}
+    def public_config() -> dict:
+        settings = get_settings()
+        return {
+            "signups_enabled": bool(settings.SIGNUPS_ENABLED),
+            "max_upload_mb": settings.MAX_UPLOAD_MB,
+            "allowed_extensions": [".pdf"],
+            "rerank_available": bool(settings.RERANK_ENABLED),
+            "rerank_default": bool(settings.RERANK_ENABLED),
+        }
 
     return api
 
