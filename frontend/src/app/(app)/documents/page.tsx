@@ -11,16 +11,18 @@ import {
   uploadDocument,
   type DocumentItem,
 } from "@/lib/api";
+import {
+  dropZoneLabel,
+  limitLabelFor,
+  maxBytesFor,
+  useUploadConfig,
+} from "@/lib/upload-config";
 
-const ACCEPTED_EXTENSIONS = new Set(["pdf", "txt", "md", "html"]);
-const FILE_INPUT_ACCEPT = ".pdf,.txt,.md,.html";
-const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const MAX_FILE_LABEL = "PDF, TXT, Markdown, or HTML — up to 25 MB each";
 const POLL_INTERVAL_MS = 2500;
 
-function getExtension(name: string): string {
+function normalizeExtension(name: string): string {
   const dot = name.lastIndexOf(".");
-  return dot === -1 ? "" : name.slice(dot + 1).toLowerCase();
+  return dot === -1 ? "" : `.${name.slice(dot + 1).toLowerCase()}`;
 }
 
 function formatBytes(bytes: number): string {
@@ -100,6 +102,7 @@ function SmallSpinner() {
 export default function DocumentsPage() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const uploadConfig = useUploadConfig();
 
   const [documents, setDocuments] = useState<DocumentItem[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -173,16 +176,17 @@ export default function DocumentsPage() {
       const rejected: string[] = [];
       const accepted = files.filter((file) => {
         currentFile = file.name;
-        const extension = getExtension(file.name);
-        if (!ACCEPTED_EXTENSIONS.has(extension)) {
+        const extension = normalizeExtension(file.name);
+        if (!uploadConfig.allowedExtensions.includes(extension)) {
           rejected.push(
-            `"${file.name}" can't be uploaded. Supported types are .pdf, .txt, .md and .html.`,
+            `"${file.name}" can't be uploaded. Supported types are ${uploadConfig.allowedTypesLabel}.`,
           );
           return false;
         }
-        if (file.size > MAX_FILE_BYTES) {
+        const maxBytes = maxBytesFor(uploadConfig, extension);
+        if (file.size > maxBytes) {
           rejected.push(
-            `"${file.name}" is ${formatBytes(file.size)} — files can be up to 25 MB.`,
+            `"${file.name}" is ${formatBytes(file.size)} — the upload limit for this file type is ${limitLabelFor(uploadConfig, extension)}.`,
           );
           return false;
         }
@@ -234,7 +238,7 @@ export default function DocumentsPage() {
         await loadDocuments();
       }
     },
-    [isUploading, loadDocuments, router],
+    [isUploading, loadDocuments, router, uploadConfig],
   );
 
   async function confirmDelete(document: DocumentItem) {
@@ -270,7 +274,7 @@ export default function DocumentsPage() {
   }
 
   return (
-    <main className="flex-1 overflow-y-auto p-6 md:p-10">
+    <main className="flex-1 p-6 md:p-10">
       <div className="mx-auto max-w-3xl">
         <div className="animate-appear">
           <h1 className="text-3xl font-semibold text-foreground">Documents</h1>
@@ -334,7 +338,7 @@ export default function DocumentsPage() {
           <span className="text-lg font-semibold text-foreground">
             Drag &amp; drop files here
           </span>
-          <span className="text-sm text-muted">{MAX_FILE_LABEL}</span>
+          <span className="text-sm text-muted">{dropZoneLabel(uploadConfig)}</span>
           <button
             type="button"
             onClick={(event) => {
@@ -358,7 +362,7 @@ export default function DocumentsPage() {
           ref={inputRef}
           type="file"
           multiple
-          accept={FILE_INPUT_ACCEPT}
+          accept={uploadConfig.acceptValue}
           className="hidden"
           onChange={(event) => {
             void handleFiles(event.target.files ?? []);

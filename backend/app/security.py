@@ -36,3 +36,16 @@ def decode_token(token: str) -> dict[str, Any] | None:
         return jwt.decode(token, get_settings().JWT_SECRET, algorithms=[ALGORITHM])
     except jwt.PyJWTError:
         return None
+
+
+def is_admin_email(email: str) -> bool:
+    """True when the email is on ADMIN_EMAILS (case-insensitive).
+
+    An empty list means nobody is an admin. The admin list itself is never
+    exposed anywhere; this returns only a yes/no computed server-side.
+    """
+    allowed = get_settings().ADMIN_EMAILS or ""
+    admins = {entry.strip().lower() for entry in allowed.split(",") if entry.strip()}
+    if not admins:
+        return False
+    return (email or "").strip().lower() in admins

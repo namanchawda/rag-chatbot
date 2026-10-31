@@ -53,3 +53,49 @@ def create_tables() -> None:
     from . import models
 
     Base.metadata.create_all(bind=engine)
+
+
+# Columns added after the first release; create_all only creates missing
+# TABLES, never columns, so the startup lifespan applies these by hand.
+_DOCUMENT_MIGRATION_COLUMNS: dict[str, str] = {
+    # Generic types that are valid on both Postgres and SQLite. The NOT NULL
+    # column carries a constant server default, so pre-existing rows backfill
+    # as "recursive" with NULL sizes.
+    "chunking_strategy": (
+        "ALTER TABLE documents ADD COLUMN chunking_strategy "
+        "VARCHAR(50) NOT NULL DEFAULT 'recursive'"
+    ),
+    "chunk_size": "ALTER TABLE documents ADD COLUMN chunk_size INTEGER NULL",
+    "chunk_overlap": "ALTER TABLE documents ADD COLUMN chunk_overlap INTEGER NULL",
+}
+
+
+def migrate_document_columns(target_engine=None) -> None:
+    """Add missing documents columns; idempotent and never drops data.
+
+    Runs ALTER TABLE ... ADD COLUMN for each column the live table does not
+    have yet, inside one transaction. Any failure is logged with a clear
+    message and re-raised so the app does not boot half-migrated.
+    """
+    import logging
+
+    from sqlalchemy import inspect, text
+
+    logger = logging.getLogger("app.db")
+    target = target_engine if target_engine is not None else engine
+    with target.connect() as connection:
+        existing = {column["name"] for column in inspect(connection).get_columns("documents")}
+        for column, statement in _DOCUMENT_MIGRATION_COLUMNS.items():
+            if column in existing:
+                continue
+            try:
+                connection.execute(text(statement))
+            except Exception as error:
+                logger.error(
+                    "Startup migration failed for documents.%s (%s); the app "
+                    "will not start half-migrated.",
+                    column,
+                    error,
+                )
+                raise
+        connection.commit()

@@ -10,10 +10,12 @@ export type ChatSource = {
 
 export type ChatEvent =
   | { type: "session"; sessionId: string; title: string }
-  | { type: "sources"; sources: ChatSource[] }
+  // reranked mirrors the backend flag: true when rerank actually ran,
+  // false when it was disabled or fell back to plain vector order.
+  | { type: "sources"; sources: ChatSource[]; reranked?: boolean }
   | { type: "token"; text: string }
   | { type: "done" }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string; code?: string };
 
 type SseEvent = { event: string; data: string };
 
@@ -59,7 +61,7 @@ export async function streamChat(
   token: string,
   signal: AbortSignal,
   onEvent: (event: ChatEvent) => void,
-  options: { sessionId?: string | null } = {},
+  options: { sessionId?: string | null; rerank?: boolean } = {},
 ): Promise<void> {
   // Tracked from send until the HTTP response arrives (or it is aborted),
   // exactly like every other request — one shared wake-up banner etc.
@@ -74,12 +76,13 @@ export async function streamChat(
         Authorization: `Bearer ${token}`,
       },
       // Omit session_id for a fresh chat; the backend then creates a session
-      // and reports it in the first "session" SSE event.
-      body: JSON.stringify(
-        options.sessionId
-          ? { question, session_id: options.sessionId }
-          : { question },
-      ),
+      // and reports it in the first "session" SSE event. rerank is always
+      // sent: true/false follows the toggle, null-less default is avoided.
+      body: JSON.stringify({
+        question,
+        rerank: options.rerank ?? false,
+        ...(options.sessionId ? { session_id: options.sessionId } : {}),
+      }),
       signal,
     });
   } catch (error) {
@@ -149,8 +152,16 @@ export async function streamChat(
         }
       } else if (sse.event === "sources") {
         try {
-          const payload = JSON.parse(sse.data) as { sources?: ChatSource[] };
-          onEvent({ type: "sources", sources: payload.sources ?? [] });
+          const payload = JSON.parse(sse.data) as {
+            sources?: ChatSource[];
+            reranked?: boolean;
+          };
+          onEvent({
+            type: "sources",
+            sources: payload.sources ?? [],
+            reranked:
+              typeof payload.reranked === "boolean" ? payload.reranked : undefined,
+          });
         } catch {
           onEvent({ type: "sources", sources: [] });
         }
@@ -172,10 +183,19 @@ export async function streamChat(
         sawError = true;
         let message = "Something went wrong. Please try again.";
         try {
-          const payload = JSON.parse(sse.data) as { error?: string };
+          const payload = JSON.parse(sse.data) as {
+            error?: unknown;
+            code?: unknown;
+          };
           if (typeof payload.error === "string" && payload.error.trim().length > 0) {
             message = payload.error;
           }
+          onEvent({
+            type: "error",
+            message,
+            code: typeof payload.code === "string" ? payload.code : undefined,
+          });
+          continue;
         } catch {
           // Keep the fallback message.
         }

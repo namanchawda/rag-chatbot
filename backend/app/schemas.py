@@ -39,6 +39,8 @@ class UserResponse(BaseModel):
     id: UUID
     email: str
     created_at: datetime
+    # Computed server-side from ADMIN_EMAILS; the admin list is never exposed.
+    is_admin: bool = False
 
 
 class AuthResponse(BaseModel):

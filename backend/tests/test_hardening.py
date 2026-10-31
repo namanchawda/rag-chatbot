@@ -310,6 +310,8 @@ class TestSignupToggle:
         assert response.json()["user"]["email"] == "fresh@example.com"
 
     def test_config_endpoint_exposes_public_values(self, monkeypatch):
+        from app.rag.chunking import describe_strategies
+
         _settings_patch(
             monkeypatch, main_module, SIGNUPS_ENABLED=True, RERANK_ENABLED=True, MAX_UPLOAD_MB=25
         )
@@ -319,9 +321,16 @@ class TestSignupToggle:
         assert opened.json() == {
             "signups_enabled": True,
             "max_upload_mb": 25,
-            "allowed_extensions": [".pdf"],
+            "allowed_extensions": [".pdf", ".txt"],
             "rerank_available": True,
             "rerank_default": True,
+            "chunking_strategies": describe_strategies(),
+            "default_chunking_strategy": "recursive",
+            "chunk_size_default": get_settings().CHUNK_SIZE,
+            "chunk_size_min": get_settings().CHUNK_SIZE_MIN,
+            "chunk_size_max": get_settings().CHUNK_SIZE_MAX,
+            "chunk_overlap_default": get_settings().CHUNK_OVERLAP,
+            "chunk_overlap_max": get_settings().CHUNK_OVERLAP_MAX,
         }
 
         _settings_patch(
@@ -329,13 +338,11 @@ class TestSignupToggle:
         )
         with TestClient(create_app()) as client:
             closed = client.get("/config")
-        assert closed.json() == {
-            "signups_enabled": False,
-            "max_upload_mb": 13,
-            "allowed_extensions": [".pdf"],
-            "rerank_available": False,
-            "rerank_default": False,
-        }
+        assert closed.json()["signups_enabled"] is False
+        assert closed.json()["max_upload_mb"] == 13
+        assert closed.json()["rerank_available"] is False
+        assert closed.json()["rerank_default"] is False
+        assert closed.json()["chunking_strategies"] == describe_strategies()
 
 
 class TestCorsOrigins:

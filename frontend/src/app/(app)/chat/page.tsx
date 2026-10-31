@@ -12,10 +12,12 @@ import {
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   ApiError,
   clearToken,
   deleteSession,
+  getPublicConfig,
   getStoredToken,
   listDocuments,
   listSessionMessages,
@@ -30,6 +32,7 @@ import { ConversationsPanel } from "@/components/conversations-panel";
 
 const MAX_QUESTION_CHARS = 2000;
 const COUNTER_THRESHOLD = 1800;
+const RERANK_STORAGE_KEY = "rag_chatbot_rerank";
 const EXAMPLE_QUESTIONS = [
   "Summarize my documents in three bullets",
   "What are the key deadlines mentioned anywhere?",
@@ -55,6 +58,10 @@ type AssistantMessage = {
   // Set for "retrying cannot help" failures (e.g. the daily message limit):
   // no Retry button is offered for that answer.
   noRetry?: boolean;
+  // Rerank per-request state: what was requested for this answer and what
+  // the backend actually did (reranked=false + rerankRequested=true → note).
+  rerankRequested?: boolean;
+  reranked?: boolean;
 };
 
 type Message = UserMessage | AssistantMessage;
@@ -64,6 +71,26 @@ let messageId = 0;
 function nextId(): string {
   messageId += 1;
   return `m${messageId}`;
+}
+
+function loadStoredRerank(): boolean | null {
+  try {
+    const raw = window.localStorage.getItem(RERANK_STORAGE_KEY);
+    if (raw === "true") return true;
+    if (raw === "false") return false;
+    return null;
+  } catch {
+    // localStorage may be unavailable; fall back to the server default.
+    return null;
+  }
+}
+
+function storeRerank(value: boolean): void {
+  try {
+    window.localStorage.setItem(RERANK_STORAGE_KEY, value ? "true" : "false");
+  } catch {
+    // Persisting is best-effort only.
+  }
 }
 
 function mapHistoryMessage(message: StoredMessage): Message {
@@ -104,19 +131,82 @@ function TypingIndicator() {
   );
 }
 
+// react-markdown blocks raw HTML by default and is used here without
+// dangerouslySetInnerHTML. remark-gfm adds tables/strikethrough/task lists;
+// links open in a new tab so readers aren't navigated away from the chat.
+// `table` is wrapped in a scrollable container so wide tables never overflow.
 function AssistantMarkdown({ content }: { content: string }) {
   return (
     <div className="chat-markdown text-[15px] leading-relaxed text-foreground">
-      <Markdown>{content}</Markdown>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          table: ({ children }) => (
+            <div className="chat-table-wrap">
+              <table>{children}</table>
+            </div>
+          ),
+          a: ({ children, href }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          ),
+        }}
+      >
+        {content}
+      </Markdown>
     </div>
   );
 }
 
-function SourcesDisclosure({ sources }: { sources: ChatSource[] }) {
+function RerankSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label
+      title="Re-scores retrieved passages for relevance, so sources fit the question better. Slightly slower."
+      className="inline-flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium text-muted transition hover:text-foreground"
+    >
+      <input
+        type="checkbox"
+        role="switch"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        aria-label="Rerank results"
+        className="peer sr-only"
+      />
+      <span
+        aria-hidden="true"
+        className="relative inline-flex h-5 w-9 shrink-0"
+      >
+        <span className="absolute inset-0 rounded-full bg-card-border transition peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent" />
+        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
+      </span>
+      Rerank results
+    </label>
+  );
+}
+
+function SourcesDisclosure({
+  sources,
+  fallback = false,
+}: {
+  sources: ChatSource[];
+  fallback?: boolean;
+}) {
   const [open, setOpen] = useState(false);
 
   return (
     <div className="mt-3 border-t border-card-border pt-2.5">
+      {fallback && (
+        <p className="mb-1.5 text-[11px] italic text-amber-600 dark:text-amber-400">
+          Ranking unavailable, showing closest matches
+        </p>
+      )}
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -136,6 +226,17 @@ function SourcesDisclosure({ sources }: { sources: ChatSource[] }) {
                     key={`${item.document_id}:${item.chunk_index}`}
                     className="rounded-lg bg-active px-3 py-2 text-xs leading-relaxed text-muted"
                   >
+                    {/* Same raw numbering as the Database page's "#" column.
+                        Old saved messages may lack chunk_index: no pill then. */}
+                    {typeof item.chunk_index === "number" &&
+                      Number.isFinite(item.chunk_index) && (
+                        <span
+                          title="Position of this passage in the document. You can see the full text in the Database tab."
+                          className="mr-2 inline-block rounded-full border border-accent/20 bg-accent/10 px-2 py-0.5 align-middle text-[10px] font-semibold text-accent"
+                        >
+                          Chunk {item.chunk_index}
+                        </span>
+                      )}
                     {item.snippet}
                   </li>
                 ))}
@@ -194,6 +295,34 @@ function ChatWorkspace() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
+
+  // Rerank: availability/defaults from /config, remembered choice from
+  // localStorage. The switch stays hidden until /config says it is available.
+  const [rerankAvailable, setRerankAvailable] = useState(false);
+  const [rerankEnabled, setRerankEnabled] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const stored = loadStoredRerank();
+    getPublicConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setRerankAvailable(config.rerank_available !== false);
+        setRerankEnabled(stored ?? config.rerank_default !== false);
+      })
+      .catch(() => {
+        // /config unavailable: keep rerank off (server default applies anyway).
+        if (!cancelled) setRerankEnabled(stored ?? false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function handleRerankChange(value: boolean) {
+    setRerankEnabled(value);
+    storeRerank(value);
+  }
 
   const readyCount =
     documents?.filter((document) => document.status === "ready").length ?? 0;
@@ -422,6 +551,7 @@ function ChatWorkspace() {
           content: "",
           sources: [],
           state: "streaming",
+          rerankRequested: rerankEnabled,
         } satisfies AssistantMessage,
       ]);
       setStreamingQuestion(question);
@@ -479,7 +609,10 @@ function ChatWorkspace() {
                 });
               }
             } else if (event.type === "sources") {
-              patchAssistant({ sources: event.sources });
+              patchAssistant({
+                sources: event.sources,
+                reranked: event.reranked,
+              });
             } else if (event.type === "token") {
               if (!isCurrent()) return;
               setMessages((current) =>
@@ -490,12 +623,16 @@ function ChatWorkspace() {
                 ),
               );
             } else if (event.type === "error") {
-              patchAssistant({ state: "error", errorMessage: event.message });
+              patchAssistant({
+                state: "error",
+                errorMessage: event.message,
+                noRetry: event.code === "service_unavailable",
+              });
             } else {
               patchAssistant({ state: "done" });
             }
           },
-          { sessionId: startSessionId },
+          { sessionId: startSessionId, rerank: rerankEnabled },
         );
         // An abort via Stop returns normally: keep the partial answer.
       } catch (error) {
@@ -504,11 +641,11 @@ function ChatWorkspace() {
           router.replace("/login");
           return;
         }
-        if (error instanceof ApiError && error.status === 429) {
-          // Daily message limit. The backend rejected the turn before any
-          // session or message row was created and before the stream
-          // started, so nothing is being saved for this question — show the
-          // server's text in the assistant bubble without a Retry button.
+        if (
+          error instanceof ApiError &&
+          (error.status === 429 || error.status === 503)
+        ) {
+          // These requests cannot be helped by retrying from the chat UI.
           patchAssistant({
             state: "error",
             errorMessage: error.message,
@@ -541,7 +678,7 @@ function ChatWorkspace() {
         }
       }
     },
-    [noteSessionActivity, router],
+    [noteSessionActivity, rerankEnabled, router],
   );
 
   function sendMessage() {
@@ -670,7 +807,9 @@ function ChatWorkspace() {
   );
 
   return (
-    <main className="relative flex flex-1 overflow-hidden">
+    // Fills the shell's main region exactly; the message list is the only
+    // scroller, so the composer stays visible no matter how long the chat.
+    <main className="relative flex min-h-0 flex-1 overflow-hidden">
       <ConversationsPanel
         sessions={sessions}
         error={listError}
@@ -721,8 +860,8 @@ function ChatWorkspace() {
         </div>
       )}
 
-      <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-card-border bg-card/60 px-4 py-2 min-[900px]:hidden">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <div className="flex shrink-0 items-center gap-2 border-b border-card-border bg-card/60 px-4 py-2 min-[900px]:hidden">
           <button
             ref={drawerToggleRef}
             type="button"
@@ -734,11 +873,15 @@ function ChatWorkspace() {
           </button>
         </div>
 
-        <div
-          ref={scrollRef}
-          onScroll={handleScroll}
-          className="flex-1 overflow-y-auto px-6 pb-6 pt-8 md:px-10"
-        >
+        {/* Message list: the one scrolling region. It is absolutely placed
+            inside a relative wrapper so the view never scrolls the page, and
+            "Jump to latest" can sit just above the composer. */}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={scrollRef}
+            onScroll={handleScroll}
+            className="app-scroll absolute inset-0 overflow-y-auto overscroll-contain px-6 pb-6 pt-8 md:px-10"
+          >
           <div className="mx-auto max-w-3xl space-y-5">
             {isEmptyNewChat ? (
               <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-14 text-center">
@@ -766,9 +909,9 @@ function ChatWorkspace() {
                       href="/documents"
                       className="rounded-sm font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
-                      Upload one in Documents
+                      Upload a PDF or TXT
                     </Link>{" "}
-                    and it will be ready in a moment.
+                    in Documents and it will be ready in a moment.
                   </p>
                 )}
                 {readyCount > 0 && (
@@ -838,7 +981,13 @@ function ChatWorkspace() {
                     )}
 
                     {!isStreaming && message.sources.length > 0 && (
-                      <SourcesDisclosure sources={message.sources} />
+                      <SourcesDisclosure
+                        sources={message.sources}
+                        fallback={
+                          message.rerankRequested === true &&
+                          message.reranked === false
+                        }
+                      />
                     )}
                   </div>
                 );
@@ -879,20 +1028,31 @@ function ChatWorkspace() {
                 </button>
               )}
           </div>
-        </div>
+          </div>
 
-        {!isPinned && (
-          <button
-            type="button"
-            onClick={jumpToLatest}
-            className="absolute bottom-36 left-1/2 z-10 -translate-x-1/2 rounded-full border border-card-border bg-card px-4 py-1.5 text-xs font-medium text-muted shadow-card backdrop-blur-2xl transition hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-          >
-            ↓ Jump to latest
-          </button>
-        )}
+          {/* Anchored to the wrapper around the message list: sits directly
+              above the composer whatever its height. */}
+          {!isPinned && (
+            <button
+              type="button"
+              onClick={jumpToLatest}
+              className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2 rounded-full border border-card-border bg-card px-4 py-1.5 text-xs font-medium text-muted shadow-card backdrop-blur-2xl transition hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              ↓ Jump to latest
+            </button>
+          )}
+        </div>
 
         <div className="shrink-0 border-t border-card-border bg-card/80 px-6 py-4 backdrop-blur-2xl md:px-10">
           <div className="mx-auto max-w-3xl">
+            {rerankAvailable && (
+              <div className="mb-2 flex">
+                <RerankSwitch
+                  checked={rerankEnabled}
+                  onChange={handleRerankChange}
+                />
+              </div>
+            )}
             <div className="flex items-end gap-2">
               <textarea
                 ref={textareaRef}

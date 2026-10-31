@@ -26,12 +26,23 @@ from ..models import _utcnow, ChatMessage, ChatRole, ChatSession, Document, Docu
 from ..rag.chat import (
     NO_DOCUMENTS_MESSAGE,
     NO_RESULTS_MESSAGE,
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
     build_llm,
     format_context,
     friendly_error,
     make_chain,
 )
 from ..rag.retrieve import RetrievedChunk, retrieve_reranked_result
+from ..rag.status import (
+    SERVICE_GROQ,
+    SERVICE_UNAVAILABLE_MESSAGE,
+    ServiceUnavailableError,
+    jina_block_state,
+    record_failure,
+    record_success,
+)
 from ..schemas import ChatRequest, ChatResponse
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -209,11 +220,64 @@ def _sources(chunks: list[RetrievedChunk]) -> list[dict]:
     return sources
 
 
+def _groq_http_status(error: BaseException) -> int | None:
+    """The provider HTTP status an exception stands for, or None."""
+    if isinstance(error, RateLimitError):
+        return 429
+    if isinstance(error, (AuthenticationError, PermissionDeniedError)):
+        return 401
+    code = getattr(error, "status_code", None)
+    if isinstance(code, int) and 400 <= code < 600:
+        return code
+    return None
+
+
+def _groq_retry_after(error: BaseException) -> str | None:
+    try:
+        return error.response.headers.get("retry-after")  # type: ignore[union-attr]
+    except AttributeError:
+        return None
+
+
+def _record_groq_failure(error: BaseException) -> None:
+    """Record the failure only when the existing handling sees 429/401/5xx.
+
+    Best-effort twice over: the recorder itself never raises, and this
+    wrapper swallows everything else too. Errors are shown exactly as
+    before; this only writes the status row.
+    """
+    try:
+        code = _groq_http_status(error)
+        if code is None or (code != 429 and code in range(400, 500) and code not in (401, 403)):
+            return
+        record_failure(
+            SERVICE_GROQ,
+            code,
+            str(error),
+            retry_after=_groq_retry_after(error) if code == 429 else None,
+        )
+    except Exception:  # noqa: BLE001 - recording must never break the request
+        logger.warning("Groq failure recording failed (%s)", type(error).__name__)
+
+
+def _record_groq_success() -> None:
+    """One completed completion; best-effort, tokens are not tracked here."""
+    try:
+        record_success(SERVICE_GROQ)
+    except Exception:  # noqa: BLE001 - recording must never break the request
+        logger.warning("Groq usage recording failed")
+
+
 @router.post("")
 def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) -> ChatResponse:
     """Answer one question from the caller's documents (for testing in /docs)."""
     question = _normalized_question(body.question)
     _check_daily_message_cap(current_user.id)
+    if jina_block_state() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=SERVICE_UNAVAILABLE_MESSAGE,
+        )
     session_id, _title = _resolve_session_and_save_user(
         body.session_id, current_user.id, question
     )
@@ -223,9 +287,15 @@ def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) 
     if not _user_has_ready_documents(current_user.id):
         answer = NO_DOCUMENTS_MESSAGE
     else:
-        chunks, reranked = retrieve_reranked_result(
-            question, current_user.id, rerank=body.rerank
-        )
+        try:
+            chunks, reranked = retrieve_reranked_result(
+                question, current_user.id, rerank=body.rerank
+            )
+        except ServiceUnavailableError:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=SERVICE_UNAVAILABLE_MESSAGE,
+            )
         if not chunks:
             answer = NO_RESULTS_MESSAGE
             reranked = False
@@ -236,10 +306,12 @@ def ask_chat(body: ChatRequest, current_user: User = Depends(get_current_user)) 
                 answer = chain.invoke({"context": format_context(chunks), "question": question})
             except Exception as error:  # noqa: BLE001
                 logger.exception("Chat answer failed for user %s", current_user.id)
+                _record_groq_failure(error)
                 raise HTTPException(
                     status_code=status.HTTP_502_BAD_GATEWAY,
                     detail=friendly_error(error),
                 )
+            _record_groq_success()
 
     _persist_safely(session_id, current_user.id, answer, sources)
     return ChatResponse(
@@ -306,6 +378,15 @@ async def _chat_stream_events(
             chunks, reranked = await run_in_threadpool(
                 retrieve_reranked_result, question, user_id, store=None, rerank=rerank
             )
+        except ServiceUnavailableError:
+            # Provider unusable (exhausted key, wrong key): friendly error
+            # event with a stable code, in the existing position (after
+            # session, before sources/tokens/done).
+            yield _sse(
+                "error",
+                {"error": SERVICE_UNAVAILABLE_MESSAGE, "code": "service_unavailable"},
+            )
+            return
         except Exception:  # noqa: BLE001
             logger.exception("Retrieval failed for user %s", user_id)
             yield _sse("error", {"error": "Could not search your documents. Please try again."})
@@ -330,7 +411,10 @@ async def _chat_stream_events(
                     yield _sse("token", {"text": text_delta})
         except Exception as error:  # noqa: BLE001
             logger.exception("Chat streaming failed for user %s", user_id)
+            await run_in_threadpool(_record_groq_failure, error)
             yield _sse("error", {"error": friendly_error(error)})
+        else:
+            await run_in_threadpool(_record_groq_success)
         yield _sse("done", {"status": "ok"})
     finally:
         _schedule_persist()
@@ -345,6 +429,13 @@ async def chat_stream(
 
     question = _normalized_question(body.question)
     _check_daily_message_cap(current_user.id)
+    # Fail fast, before the stream and before the user turn is stored:
+    # when Jina is exhausted or its key is invalid no answer can be built.
+    if jina_block_state() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=SERVICE_UNAVAILABLE_MESSAGE,
+        )
     # Resolve and persist the user turn up front, so a bad or foreign session
     # id is a clean 404 instead of an error event mid-stream.
     session_id, session_title = await run_in_threadpool(

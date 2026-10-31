@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     MAX_TOTAL_CHUNKS_PER_USER: int = 3000
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 150
+    # Selectable chunking strategies (see rag/chunking.py).
+    CHUNK_SIZE_MIN: int = 300
+    CHUNK_SIZE_MAX: int = 2000
+    CHUNK_OVERLAP_MAX: int = 300
+    DEFAULT_CHUNKING_STRATEGY: str = "recursive"
     GROQ_API_KEY: str
     GROQ_MODEL: str
     RETRIEVAL_TOP_K: int = 5
@@ -38,6 +43,15 @@ class Settings(BaseSettings):
     SIGNUPS_ENABLED: bool = True
     TRUST_PROXY: bool = False
     FRONTEND_ORIGINS: str = ""
+    # Admin status API. Comma-separated emails, matched case-insensitively;
+    # empty means nobody is an admin.
+    ADMIN_EMAILS: str = ""
+    # Balance shown on the Jina dashboard when the key was installed.
+    JINA_TOKEN_BUDGET: int = 10000000
+    # Low-balance flag threshold: percent of the budget remaining.
+    JINA_LOW_BALANCE_PERCENT: int = 15
+    # Minimum seconds between /admin/status/check calls.
+    STATUS_CHECK_COOLDOWN_SECONDS: int = 30
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
 

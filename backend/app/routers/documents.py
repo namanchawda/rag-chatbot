@@ -3,7 +3,7 @@ import tempfile
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -12,8 +12,11 @@ from ..db import get_db
 from ..deps import get_current_user
 from ..models import Document, DocumentStatus, User
 from ..rag.ingest import SUPPORTED_SUFFIXES, ingest_document
+from ..rag.chunking import resolve_strategy
 
 router = APIRouter(prefix="/documents", tags=["documents"])
+
+_SUPPORTED_TYPE_LABEL = " and ".join(sorted(SUPPORTED_SUFFIXES))
 
 
 def _document_response(document: Document) -> dict:
@@ -24,13 +27,64 @@ def _document_response(document: Document) -> dict:
         "chunk_count": document.chunk_count,
         "error": document.error,
         "created_at": document.created_at,
+        "chunking_strategy": document.chunking_strategy,
+        "chunk_size": document.chunk_size,
+        "chunk_overlap": document.chunk_overlap,
     }
+
+
+def _validate_chunking_options(
+    chunking_strategy: str | None,
+    chunk_size: int | None,
+    chunk_overlap: int | None,
+) -> tuple[str, int, int]:
+    """Resolve and validate the optional chunking form fields.
+
+    Runs before a single byte of the file is read, so bad requests never
+    touch the upload. Returns the defaults when a field is missing.
+    """
+    settings = get_settings()
+    try:
+        strategy = resolve_strategy(
+            chunking_strategy if chunking_strategy is not None else settings.DEFAULT_CHUNKING_STRATEGY
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+
+    size = settings.CHUNK_SIZE if chunk_size is None else chunk_size
+    if not settings.CHUNK_SIZE_MIN <= size <= settings.CHUNK_SIZE_MAX:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"chunk_size must be between {settings.CHUNK_SIZE_MIN} "
+                f"and {settings.CHUNK_SIZE_MAX} characters"
+            ),
+        )
+
+    overlap = settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
+    if (
+        overlap < 0
+        or overlap > settings.CHUNK_OVERLAP_MAX
+        or overlap * 2 >= size
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"chunk_overlap must be at least 0, at most "
+                f"{settings.CHUNK_OVERLAP_MAX}, and less than half of "
+                f"chunk_size ({size} characters)"
+            ),
+        )
+    return strategy.key, size, overlap
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    chunking_strategy: str | None = Form(default=None),
+    chunk_size: int | None = Form(default=None),
+    chunk_overlap: int | None = Form(default=None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -43,6 +97,11 @@ def upload_document(
             detail=f"Document limit reached ({limit}). Delete one to upload another.",
         )
 
+    # Chunking options are validated before reading or saving the file.
+    strategy_key, resolved_size, resolved_overlap = _validate_chunking_options(
+        chunking_strategy, chunk_size, chunk_overlap
+    )
+
     filename = file.filename or ""
     if not filename.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file provided")
@@ -51,7 +110,7 @@ def upload_document(
     if suffix not in SUPPORTED_SUFFIXES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type '{suffix}'. Supported type: .pdf",
+            detail=f"Unsupported file type '{suffix}'. Supported types: {_SUPPORTED_TYPE_LABEL}",
         )
 
     max_bytes = get_settings().MAX_UPLOAD_MB * 1024 * 1024
@@ -74,7 +133,7 @@ def upload_document(
         # Content sniffing: a renamed MIME type is not proof of a real PDF.
         with open(temp_path, "rb") as probe:
             magic = probe.read(5)
-        if magic != b"%PDF-":
+        if suffix == ".pdf" and magic != b"%PDF-":
             raise HTTPException(
                 status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
                 detail="This file is not a valid PDF. Only real PDF files are accepted.",
@@ -90,6 +149,9 @@ def upload_document(
         status=DocumentStatus.PROCESSING,
         chunk_count=0,
         error=None,
+        chunking_strategy=strategy_key,
+        chunk_size=resolved_size,
+        chunk_overlap=resolved_overlap,
     )
     db.add(document)
     db.commit()
@@ -101,6 +163,9 @@ def upload_document(
         temp_path,
         filename,
         str(current_user.id),
+        chunking_strategy=strategy_key,
+        chunk_size=resolved_size,
+        chunk_overlap=resolved_overlap,
     )
 
     return _document_response(document)

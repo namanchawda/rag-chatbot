@@ -6,10 +6,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import Settings, get_settings
-from .db import create_tables
+from .db import create_tables, migrate_document_columns
 from .maintenance import fail_stale_uploads
+from .rag.chunking import describe_strategies
 from .rag.ingest import ensure_pgvector
-from .routers import auth, chat, chunks, documents, sessions
+from .routers import admin, auth, chat, chunks, documents, sessions
 
 _LOG_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 
@@ -48,6 +49,9 @@ configure_logging()
 async def lifespan(_: FastAPI):
     ensure_pgvector()
     create_tables()
+    # create_all cannot add columns to an existing documents table; the
+    # migration re-raises on failure so the app boots only fully migrated.
+    migrate_document_columns()
     try:
         fail_stale_uploads()
     except Exception as error:  # noqa: BLE001 - startup must survive a sweep failure
@@ -84,6 +88,7 @@ def create_app() -> FastAPI:
     api.include_router(chat.router)
     api.include_router(sessions.router)
     api.include_router(chunks.router)
+    api.include_router(admin.router)
 
     @api.get("/health")
     def health() -> dict[str, str]:
@@ -95,9 +100,16 @@ def create_app() -> FastAPI:
         return {
             "signups_enabled": bool(settings.SIGNUPS_ENABLED),
             "max_upload_mb": settings.MAX_UPLOAD_MB,
-            "allowed_extensions": [".pdf"],
+            "allowed_extensions": [".pdf", ".txt"],
             "rerank_available": bool(settings.RERANK_ENABLED),
             "rerank_default": bool(settings.RERANK_ENABLED),
+            "chunking_strategies": describe_strategies(),
+            "default_chunking_strategy": settings.DEFAULT_CHUNKING_STRATEGY,
+            "chunk_size_default": settings.CHUNK_SIZE,
+            "chunk_size_min": settings.CHUNK_SIZE_MIN,
+            "chunk_size_max": settings.CHUNK_SIZE_MAX,
+            "chunk_overlap_default": settings.CHUNK_OVERLAP,
+            "chunk_overlap_max": settings.CHUNK_OVERLAP_MAX,
         }
 
     return api

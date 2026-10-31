@@ -17,6 +17,16 @@ from typing import Any
 import httpx
 
 from ..config import get_settings
+from .status import (
+    SERVICE_JINA,
+    STATE_EXHAUSTED,
+    STATE_INVALID_KEY,
+    ServiceUnavailableError,
+    classify_failure,
+    record_failure,
+    record_success,
+    usage_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +48,19 @@ class JinaRerankError(RuntimeError):
 def _parse_scores(response: httpx.Response) -> list[tuple[int, float]]:
     """Parse a reply into (index, relevance_score) pairs, returned as-is."""
     if response.status_code != 200:
+        state, _message = classify_failure(SERVICE_JINA, response.status_code, response.text)
+        record_failure(SERVICE_JINA, response.status_code, response.text)
+        if state in (STATE_EXHAUSTED, STATE_INVALID_KEY):
+            # Client-safe message; the retrieval fallback swallows it and
+            # chat proceeds on vector order without reranking.
+            raise ServiceUnavailableError()
         # Keep the API's exact error text: a rejected model name must be
         # visible to operators.
         raise JinaRerankError(
             f"Jina rerank API returned {response.status_code}: {response.text}"
         )
     payload = response.json()
+    record_success(SERVICE_JINA, usage_tokens(payload))
     if not isinstance(payload, dict) or "results" not in payload:
         raise JinaRerankError(f"Unexpected Jina rerank response: {str(payload)[:300]}")
     parsed: list[tuple[int, float]] = []
@@ -110,6 +127,8 @@ class JinaReranker:
 
     def _request(self, body: dict[str, Any]) -> list[tuple[int, float]]:
         last_error: Exception | None = None
+        last_failure_response: httpx.Response | None = None
+        last_network_error: Exception | None = None
         for attempt in range(_MAX_ATTEMPTS):
             self._throttle()
             try:
@@ -123,6 +142,7 @@ class JinaReranker:
                 )
             except httpx.HTTPError as error:
                 last_error = JinaRerankError(f"Jina rerank request failed: {error}")
+                last_network_error = error
                 response = None
 
             if response is None:
@@ -133,10 +153,16 @@ class JinaReranker:
                 last_error = JinaRerankError(
                     f"Jina rerank API returned {response.status_code}: {response.text[:300]}"
                 )
+                last_failure_response = response
                 self._sleep_backoff(attempt, retry_after=response.headers.get("Retry-After"))
                 continue
             return _parse_scores(response)
 
+        # Retries exhausted: record the final failure only.
+        if last_failure_response is not None:
+            record_failure(SERVICE_JINA, last_failure_response.status_code, last_failure_response.text)
+        elif last_network_error is not None:
+            record_failure(SERVICE_JINA, None, f"Jina rerank request failed: {last_network_error}")
         raise JinaRerankError(
             f"Jina rerank API kept failing after {_MAX_ATTEMPTS} attempts: {last_error}"
         )

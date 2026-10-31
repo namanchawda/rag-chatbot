@@ -9,11 +9,21 @@ from ..db import get_db
 from ..models import User
 from ..rate_limit import allow, client_ip
 from ..schemas import AuthResponse, LoginRequest, SignupRequest, UserResponse
-from ..security import create_access_token, hash_password, verify_password
+from ..security import create_access_token, hash_password, is_admin_email, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 GENERIC_LOGIN_ERROR = "Invalid email or password"
+
+
+def _user_response(user: User) -> UserResponse:
+    """Build the user payload with is_admin computed server-side."""
+    return UserResponse(
+        id=user.id,
+        email=user.email,
+        created_at=user.created_at,
+        is_admin=is_admin_email(user.email),
+    )
 
 
 def _restrict_attempts(request: Request) -> None:
@@ -47,7 +57,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> AuthRespons
     return AuthResponse(
         access_token=create_access_token(user.id),
         token_type="bearer",
-        user=UserResponse.model_validate(user),
+        user=_user_response(user),
     )
 
 
@@ -63,10 +73,10 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
     return AuthResponse(
         access_token=create_access_token(user.id),
         token_type="bearer",
-        user=UserResponse.model_validate(user),
+        user=_user_response(user),
     )
 
 
 @router.get("/me", response_model=UserResponse)
-def me(current_user: User = Depends(get_current_user)) -> User:
-    return current_user
+def me(current_user: User = Depends(get_current_user)) -> UserResponse:
+    return _user_response(current_user)

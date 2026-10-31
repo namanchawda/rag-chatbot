@@ -250,7 +250,10 @@ export function ConversationsPanel({
         </div>
       )}
 
-      <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-y-auto p-2">
+      <nav
+        aria-label="Conversations"
+        className="app-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-2"
+      >
         {sessions === null && !error ? (
           <div aria-hidden="true" className="space-y-1.5">
             {Array.from({ length: 8 }).map((_, index) => (

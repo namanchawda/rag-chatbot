@@ -17,7 +17,6 @@ from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_core.documents import Document
 from langchain_postgres import PGVector
 from langchain_postgres.vectorstores import DistanceStrategy
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import func, select, text as sql_text
 from sqlalchemy.engine import Engine
 
@@ -25,12 +24,13 @@ from ..config import get_settings
 from ..db import SessionLocal, engine
 from ..models import Document as DocumentRow
 from ..models import DocumentStatus
+from .chunking import DEFAULT_STRATEGY_KEY, split_documents as split_documents_strategy
 from .embeddings import Embeddings, JinaEmbeddings
 
 logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "rag-chatbot-chunks"
-SUPPORTED_SUFFIXES = {".pdf"}
+SUPPORTED_SUFFIXES = {".pdf", ".txt"}
 
 # About 64 chunks per embed+insert round trip keeps batch memory flat and
 # limits the blast radius of a failed batch.
@@ -63,6 +63,10 @@ class ChunkLimitError(ValueError):
 
 class UserChunkLimitError(ValueError):
     """Raised when a document would exceed MAX_TOTAL_CHUNKS_PER_USER."""
+
+
+class NoTextContentError(ValueError):
+    """Raised when a document holds no readable text at all."""
 
 
 def ensure_pgvector(target_engine: Engine | None = None) -> None:
@@ -130,26 +134,48 @@ def _validate_pdf(resolved: str) -> None:
 
 
 def load_document(temp_path: str | Path, filename: str) -> list[Document]:
-    """Load a single temporary PDF; anything else is unsupported."""
+    """Load a temporary PDF or TXT; anything else is unsupported."""
     suffix = Path(filename).suffix.casefold()
-    if suffix != ".pdf":
-        raise UnsupportedFileTypeError(
-            f"Unsupported file type '{suffix}'. Supported type: .pdf"
-        )
-    resolved = str(temp_path)
-    _validate_pdf(resolved)
-    return PyMuPDFLoader(resolved, mode="single").load()
-
-
-def chunk_documents(documents: list[Document]) -> list[Document]:
-    """Split loaded documents with the configured size and overlap."""
-    settings = get_settings()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.CHUNK_SIZE,
-        chunk_overlap=settings.CHUNK_OVERLAP,
-        length_function=len,
+    if suffix == ".pdf":
+        resolved = str(temp_path)
+        _validate_pdf(resolved)
+        return PyMuPDFLoader(resolved, mode="single").load()
+    if suffix == ".txt":
+        try:
+            text = Path(temp_path).read_text(encoding="utf-8")
+        except UnicodeDecodeError as error:
+            raise NoTextContentError(
+                "This text file is not valid UTF-8, so it can't be indexed."
+            ) from error
+        if not text.strip():
+            raise NoTextContentError(
+                "The file contains no readable text, so there is nothing to index."
+            )
+        # Metadata kept minimal; _annotate sets the authoritative source.
+        return [Document(page_content=text, metadata={"source": Path(filename).name})]
+    raise UnsupportedFileTypeError(
+        f"Unsupported file type '{suffix}'. Supported types: .pdf and .txt"
     )
-    return splitter.split_documents(documents)
+
+
+def chunk_documents(
+    documents: list[Document],
+    *,
+    strategy: str = DEFAULT_STRATEGY_KEY,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
+) -> list[Document]:
+    """Split loaded documents with the chosen strategy and sizes.
+
+    Sizes fall back to the configured CHUNK_SIZE / CHUNK_OVERLAP defaults.
+    """
+    settings = get_settings()
+    return split_documents_strategy(
+        documents,
+        strategy_key=strategy,
+        chunk_size=settings.CHUNK_SIZE if chunk_size is None else chunk_size,
+        chunk_overlap=settings.CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap,
+    )
 
 
 def delete_document_vectors(store: PGVector, document_id: str, chunk_count: int) -> None:
@@ -165,6 +191,7 @@ def _annotate(
     document_id: str,
     source: str,
     index: int,
+    strategy: str,
 ) -> Document:
     chunk.metadata.update(
         {
@@ -172,6 +199,7 @@ def _annotate(
             "document_id": document_id,
             "source": source,
             "chunk_index": index,
+            "chunking_strategy": strategy,
         }
     )
     chunk.id = f"{document_id}:{index}"
@@ -224,6 +252,9 @@ def ingest_document(
     filename: str,
     user_id: str,
     *,
+    chunking_strategy: str = DEFAULT_STRATEGY_KEY,
+    chunk_size: int | None = None,
+    chunk_overlap: int | None = None,
     embeddings_factory: Callable[[], Embeddings] | None = None,
     session_factory=SessionLocal,
 ) -> None:
@@ -242,7 +273,12 @@ def ingest_document(
     try:
         try:
             documents = load_document(temp_path, filename)
-            chunks = chunk_documents(documents)
+            chunks = chunk_documents(
+                documents,
+                strategy=chunking_strategy,
+                chunk_size=chunk_size,
+                chunk_overlap=chunk_overlap,
+            )
             settings = get_settings()
 
             if len(chunks) > settings.MAX_CHUNKS_PER_DOCUMENT:
@@ -262,7 +298,14 @@ def ingest_document(
                 )
 
             annotated = [
-                _annotate(chunk, user_id=user_id, document_id=document_id, source=filename, index=position)
+                _annotate(
+                    chunk,
+                    user_id=user_id,
+                    document_id=document_id,
+                    source=filename,
+                    index=position,
+                    strategy=chunking_strategy,
+                )
                 for position, chunk in enumerate(chunks)
             ]
             if embeddings_factory is None:
@@ -282,9 +325,18 @@ def ingest_document(
 
         row = session.get(DocumentRow, document_row_id)
         if row is not None:
+            effective_size = (
+                get_settings().CHUNK_SIZE if chunk_size is None else chunk_size
+            )
+            effective_overlap = (
+                get_settings().CHUNK_OVERLAP if chunk_overlap is None else chunk_overlap
+            )
             row.status = DocumentStatus.READY
             row.chunk_count = len(annotated)
             row.error = None
+            row.chunking_strategy = chunking_strategy
+            row.chunk_size = effective_size
+            row.chunk_overlap = effective_overlap
             session.commit()
         logger.info("Ingested %s as %s chunks", filename, len(annotated))
     finally:

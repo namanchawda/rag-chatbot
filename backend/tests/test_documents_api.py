@@ -56,7 +56,18 @@ class TestUpload:
         # BackgroundTasks run before TestClient returns: the row is already done.
         assert body["status"] in {"processing", "ready"}
 
-    def test_rejects_non_pdf_extension(self, client, users):
+    def test_accepts_txt_upload(self, client, users):
+        test_client, _ = client
+        response = test_client.post(
+            "/documents",
+            files={"file": ("notes.txt", b"plain text body", "text/plain")},
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body["chunking_strategy"] == "recursive"
+        assert body["chunk_size"] is not None
+
+    def test_rejects_unknown_extension(self, client, users):
         test_client, _ = client
         response = test_client.post(
             "/documents",
@@ -64,16 +75,6 @@ class TestUpload:
         )
         assert response.status_code == 415
         assert ".docx" in response.json()["detail"]
-
-    def test_rejects_txt_upload(self, client, users):
-        test_client, _ = client
-        response = test_client.post(
-            "/documents",
-            files={"file": ("notes.txt", b"plain text", "text/plain")},
-        )
-        assert response.status_code == 415
-        detail = response.json()["detail"]
-        assert ".txt" in detail and ".pdf" in detail
 
     def test_rejects_fake_pdf_without_magic_header_and_deletes_temp(
         self, client, users, monkeypatch

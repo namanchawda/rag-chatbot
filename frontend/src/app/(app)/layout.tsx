@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AdminServiceIndicator } from "@/components/admin-services";
 
 type NavItem = {
   label: string;
@@ -17,7 +18,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Dashboard", href: "/dashboard" },
   { label: "Documents", href: "/documents" },
   { label: "Chat", href: "/chat" },
-  { label: "Database", note: "Coming soon" },
+  { label: "Database", href: "/database" },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
@@ -41,8 +42,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
-      <header className="sticky top-0 z-10 border-b border-card-border bg-card backdrop-blur-2xl">
+    <div className="app-shell flex flex-col overflow-hidden bg-background">
+      <header className="z-10 shrink-0 border-b border-card-border bg-card backdrop-blur-2xl">
         <div className="flex h-14 items-center justify-between px-6">
           <div className="flex items-center gap-2.5">
             <span
@@ -56,6 +57,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             </span>
           </div>
           <div className="flex items-center gap-4">
+            {user?.is_admin === true && <AdminServiceIndicator />}
             <span className="text-sm text-muted">{user?.email}</span>
             <ThemeToggle />
             <button
@@ -69,8 +71,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <div className="flex flex-1">
-        <aside className="hidden w-60 shrink-0 border-r border-card-border md:block">
+      {/* Below the top bar: a fixed-height flex row. The main region
+          scrolls internally; the shell itself never grows. */}
+      <div className="flex min-h-0 flex-1">
+        <aside className="app-scroll hidden w-60 shrink-0 overflow-y-auto border-r border-card-border md:block">
           <nav aria-label="Main" className="flex flex-col gap-1 p-4">
             {NAV_ITEMS.map((item) => {
               if (!item.href) {
@@ -109,7 +113,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           </nav>
         </aside>
 
-        {children}
+        {/* Main content region: Dashboard/Documents/Database scroll in here
+            while the top bar and sidebar stay put. */}
+        <section className="app-scroll flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overscroll-contain">
+          {children}
+        </section>
       </div>
     </div>
   );

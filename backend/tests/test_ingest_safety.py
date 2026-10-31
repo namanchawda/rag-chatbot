@@ -109,7 +109,7 @@ class TestChunkCap:
         monkeypatch.setattr(
             ingest_module,
             "chunk_documents",
-            lambda documents: [Document(page_content=f"chunk {i}") for i in range(3)],
+            lambda documents, **_kwargs: [Document(page_content=f"chunk {i}") for i in range(3)],
         )
         temp_path = _write_temp_pdf("some text")
         row = self._seed(users)
@@ -138,7 +138,7 @@ class TestChunkCap:
         monkeypatch.setattr(
             ingest_module,
             "chunk_documents",
-            lambda documents: [Document(page_content=f"chunk {i}") for i in range(3)],
+            lambda documents, **_kwargs: [Document(page_content=f"chunk {i}") for i in range(3)],
         )
         # An existing READY document already holds 2 of the user's chunks;
         # adding 3 more would break the total of 4.
@@ -177,7 +177,7 @@ class TestChunkCap:
         monkeypatch.setattr(
             ingest_module,
             "chunk_documents",
-            lambda documents: [Document(page_content=f"chunk {i}") for i in range(3)],
+            lambda documents, **_kwargs: [Document(page_content=f"chunk {i}") for i in range(3)],
         )
         # User B's documents are irrelevant to user A's total.
         users["session"].add(
@@ -217,7 +217,7 @@ class TestBatchedInsert:
         store = _EmbeddingVectorStore(embeddings)
         monkeypatch.setattr(ingest_module, "build_vectorstore", lambda embeddings=None: store)
         monkeypatch.setattr(
-            ingest_module, "chunk_documents", lambda documents: self._fake_chunks(5)
+            ingest_module, "chunk_documents", lambda documents, **_kwargs: self._fake_chunks(5)
         )
         temp_path = _write_temp_pdf("some text")
         row = DocumentRow(
@@ -259,7 +259,7 @@ class TestBatchedInsert:
         store.add_documents = add_then_fail
         monkeypatch.setattr(ingest_module, "build_vectorstore", lambda embeddings=None: store)
         monkeypatch.setattr(
-            ingest_module, "chunk_documents", lambda documents: self._fake_chunks(5)
+            ingest_module, "chunk_documents", lambda documents, **_kwargs: self._fake_chunks(5)
         )
         temp_path = _write_temp_pdf("some text")
         row = DocumentRow(

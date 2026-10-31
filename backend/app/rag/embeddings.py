@@ -12,6 +12,16 @@ import httpx
 from langchain_core.embeddings import Embeddings
 
 from ..config import get_settings
+from .status import (
+    SERVICE_JINA,
+    STATE_EXHAUSTED,
+    STATE_INVALID_KEY,
+    ServiceUnavailableError,
+    usage_tokens,
+    classify_failure,
+    record_failure,
+    record_success,
+)
 
 _API_URL = "https://api.jina.ai/v1/embeddings"
 _MAX_BATCH = 32
@@ -104,6 +114,8 @@ class JinaEmbeddings(Embeddings):
         }
 
         last_error: Exception | None = None
+        last_failure_response: httpx.Response | None = None
+        last_network_error: Exception | None = None
         for attempt in range(_MAX_ATTEMPTS):
             self._throttle()
             try:
@@ -117,6 +129,7 @@ class JinaEmbeddings(Embeddings):
                 )
             except httpx.HTTPError as error:
                 last_error = JinaEmbeddingError(f"Jina embedding request failed: {error}")
+                last_network_error = error
                 response = None
 
             if response is None:
@@ -127,16 +140,29 @@ class JinaEmbeddings(Embeddings):
                 last_error = JinaEmbeddingError(
                     f"Jina embeddings API returned {response.status_code}: {response.text}"
                 )
+                last_failure_response = response
                 self._sleep_backoff(attempt, retry_after=response.headers.get("Retry-After"))
                 continue
             return self._parse(response)
 
+        # Retries exhausted: record the final failure only (intermediate
+        # retried 429s stay unrecorded per design).
+        if last_failure_response is not None:
+            record_failure(SERVICE_JINA, last_failure_response.status_code, last_failure_response.text)
+        elif last_network_error is not None:
+            record_failure(SERVICE_JINA, None, f"Jina embeddings request failed: {last_network_error}")
         raise JinaEmbeddingError(f"Jina embeddings API kept failing after {_MAX_ATTEMPTS} attempts: {last_error}")
 
     def _parse(self, response: httpx.Response) -> dict:
         # Any non-retryable error is surfaced verbatim; in particular a rejected
         # task value must bubble up exactly as the API reported it.
         if response.status_code != 200:
+            state, _message = classify_failure(SERVICE_JINA, response.status_code, response.text)
+            record_failure(SERVICE_JINA, response.status_code, response.text)
+            if state in (STATE_EXHAUSTED, STATE_INVALID_KEY):
+                # Client-safe message; routers map it to a friendly 503 or
+                # document error without provider details.
+                raise ServiceUnavailableError()
             raise JinaEmbeddingError(
                 f"Jina embeddings API returned {response.status_code}: {response.text}"
             )
@@ -146,6 +172,7 @@ class JinaEmbeddings(Embeddings):
             raise JinaEmbeddingError(f"Jina embeddings API error: {parse_error}")
         if "data" not in payload:
             raise JinaEmbeddingError(f"Unexpected Jina embeddings response: {payload}")
+        record_success(SERVICE_JINA, usage_tokens(payload))
         return payload
 
     def _throttle(self) -> None:

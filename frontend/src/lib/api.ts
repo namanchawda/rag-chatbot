@@ -21,6 +21,7 @@ export type User = {
   id: string;
   email: string;
   created_at: string;
+  is_admin: boolean;
 };
 
 export type AuthResponse = {
@@ -111,9 +112,10 @@ export async function apiRequest<T>(
     method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
     body?: unknown;
     token?: string | null;
+    signal?: AbortSignal;
   } = {},
 ): Promise<T> {
-  const { method = "GET", body, token } = options;
+  const { method = "GET", body, token, signal } = options;
   const isFormData = body instanceof FormData;
   // Never auto-retry POST/PATCH/DELETE (or anything but GET): they are not
   // guaranteed idempotent, and a wake-up delay is not worth double effects.
@@ -136,8 +138,17 @@ export async function apiRequest<T>(
           ...(body !== undefined
             ? { body: isFormData ? body : JSON.stringify(body) }
             : {}),
+          ...(signal ? { signal } : {}),
         });
-      } catch {
+      } catch (error) {
+        // A caller abort is not a network error: bubble it up untouched so
+        // no silent GET retry happens after the caller stopped caring.
+        if (
+          signal?.aborted ||
+          (error instanceof Error && error.name === "AbortError")
+        ) {
+          throw error;
+        }
         // Network error: idempotent GETs go again after a short backoff,
         // up to three more tries.
         if (isGet && attempt < GET_RETRY_DELAYS_MS.length) {
@@ -242,7 +253,6 @@ export type StoredChatSource = {
   chunk_index: number;
   snippet: string;
 };
-
 export type SessionItem = {
   id: string;
   title: string;
@@ -306,9 +316,120 @@ export function deleteSession(
 
 export type PublicConfig = {
   signups_enabled: boolean;
+  // All of the following may be absent on older backends; callers fall back.
+  max_upload_mb?: number;
+  max_text_upload_mb?: number;
+  allowed_extensions?: string[];
+  rerank_available?: boolean;
+  rerank_default?: boolean;
 };
 
 // No auth: this endpoint exists precisely so the login page can ask it.
 export function getPublicConfig(): Promise<PublicConfig> {
   return apiRequest<PublicConfig>("/config");
+}
+
+export type ServiceState =
+  | "ok"
+  | "invalid_key"
+  | "exhausted"
+  | "rate_limited"
+  | "unavailable"
+  | "error"
+  | "unknown";
+
+export type ServiceStatus = {
+  state: ServiceState;
+  http_status: number | null;
+  message: string | null;
+  last_success_at: string | null;
+  last_error_at: string | null;
+};
+
+export type AdminStatus = {
+  jina: ServiceStatus & {
+    tokens_used_since_reset: number;
+    tokens_used_today: number;
+    requests_today: number;
+    errors_today: number;
+    tokens_budget: number;
+    tokens_estimated_remaining: number;
+    percent_remaining: number;
+    low: boolean;
+  };
+  groq: ServiceStatus & {
+    answers_last_24h: number;
+  };
+  checked_at: string;
+};
+
+export function getAdminStatus(
+  token: string,
+  signal?: AbortSignal,
+): Promise<AdminStatus> {
+  return apiRequest<AdminStatus>("/admin/status", { token, signal });
+}
+
+export function checkAdminStatus(token: string): Promise<AdminStatus> {
+  return apiRequest<AdminStatus>("/admin/status/check", {
+    method: "POST",
+    token,
+  });
+}
+
+export function resetAdminUsage(token: string): Promise<AdminStatus> {
+  return apiRequest<AdminStatus>("/admin/status/reset-usage", {
+    method: "POST",
+    token,
+  });
+}
+
+// --- Chunks browser (read-only; matches backend /chunks) -------------------
+
+export type ChunkItem = {
+  id: string;
+  document_id: string;
+  source: string;
+  chunk_index: number;
+  text: string;
+  char_count: number;
+  token_estimate: number;
+};
+
+export type ChunkListResponse = {
+  items: ChunkItem[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type ChunkStats = {
+  documents: number;
+  chunks: number;
+  characters: number;
+};
+
+export function chunkStats(token: string): Promise<ChunkStats> {
+  return apiRequest<ChunkStats>("/chunks/stats", { token });
+}
+
+export function listChunks(
+  token: string,
+  options: {
+    documentId?: string | null;
+    q?: string | null;
+    limit?: number;
+    offset?: number;
+    signal?: AbortSignal;
+  } = {},
+): Promise<ChunkListResponse> {
+  const params = new URLSearchParams();
+  if (options.documentId) params.set("document_id", options.documentId);
+  if (options.q && options.q.length > 0) params.set("q", options.q);
+  params.set("limit", String(options.limit ?? 20));
+  params.set("offset", String(options.offset ?? 0));
+  return apiRequest<ChunkListResponse>(`/chunks?${params.toString()}`, {
+    token,
+    signal: options.signal,
+  });
 }

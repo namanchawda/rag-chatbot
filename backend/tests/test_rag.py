@@ -88,13 +88,37 @@ class TestLoaders:
         finally:
             Path(path).unlink()
 
-    def test_load_rejects_txt_and_html(self):
+    def test_load_rejects_md_and_html(self):
         path = _write_temp_pdf()
         try:
-            for filename in ("notes.txt", "readme.md", "page.html"):
+            for filename in ("readme.md", "page.html"):
                 with pytest.raises(UnsupportedFileTypeError) as error:
                     load_document(path, filename)
                 assert filename.rsplit(".", 1)[-1] in str(error.value)
+        finally:
+            Path(path).unlink()
+
+    def test_load_accepts_txt_with_utf8_content(self):
+        descriptor, path = tempfile.mkstemp(suffix=".txt")
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write("Bonjour, this is plain text.".encode("utf-8"))
+            documents = load_document(path, "notes.txt")
+            assert len(documents) == 1
+            assert documents[0].page_content == "Bonjour, this is plain text."
+            assert "source" in documents[0].metadata
+        finally:
+            Path(path).unlink()
+
+    def test_load_rejects_non_utf8_txt(self):
+        descriptor, path = tempfile.mkstemp(suffix=".txt")
+        os.close(descriptor)
+        try:
+            with open(path, "wb") as handle:
+                handle.write(b"\xff\xfe\x00\x01invalid")
+            with pytest.raises(ingest_module.NoTextContentError) as error:
+                load_document(path, "notes.txt")
+            assert "UTF-8" in str(error.value)
         finally:
             Path(path).unlink()
 
@@ -169,6 +193,7 @@ class TestSplitterAndMetadata:
             document_id="doc-9",
             source="notes.txt",
             index=3,
+            strategy="recursive",
         )
         assert chunk.metadata["user_id"] == "user-1"
         assert chunk.metadata["document_id"] == "doc-9"

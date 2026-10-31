@@ -1,10 +1,21 @@
 import enum
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -47,6 +58,13 @@ class Document(Base):
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    # Chunking settings actually used for ingestion. Sizes are NULL for
+    # uploads made before they were tracked (defaults applied at ingest).
+    chunking_strategy: Mapped[str] = mapped_column(
+        String(50), default="recursive", server_default="recursive", nullable=False
+    )
+    chunk_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_overlap: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class ChatSession(Base):
@@ -91,3 +109,35 @@ class ChatMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     session: Mapped["ChatSession"] = relationship(back_populates="messages")
+
+
+class ServiceUsage(Base):
+    """Per-service, per-day usage counters, written with atomic increments."""
+
+    __tablename__ = "service_usage"
+    __table_args__ = (
+        UniqueConstraint("service", "day", name="uq_service_usage_service_day"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    service: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    requests: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    errors: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class ServiceStatus(Base):
+    """Latest known state of one external service; one row per service."""
+
+    __tablename__ = "service_status"
+
+    service: Mapped[str] = mapped_column(String(20), primary_key=True)
+    state: Mapped[str] = mapped_column(String(30), default="unknown", nullable=False)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Sanitized and truncated at 200 chars; never contains keys or bodies.
+    message: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    usage_reset_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
