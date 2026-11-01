@@ -5,9 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .config import Settings, get_settings
+from .config import Settings, get_settings, validate_email_settings
 from .db import create_tables, migrate_document_columns
-from .maintenance import fail_stale_uploads
+from .maintenance import cleanup_auth_records, fail_stale_uploads
 from .rag.chunking import describe_strategies
 from .rag.ingest import ensure_pgvector
 from .routers import admin, auth, chat, chunks, documents, sessions
@@ -47,6 +47,7 @@ configure_logging()
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    validate_email_settings()
     ensure_pgvector()
     create_tables()
     # create_all cannot add columns to an existing documents table; the
@@ -57,6 +58,13 @@ async def lifespan(_: FastAPI):
     except Exception as error:  # noqa: BLE001 - startup must survive a sweep failure
         logging.getLogger(__name__).warning(
             "Startup upload sweep failed (%s); the app will still start",
+            type(error).__name__,
+        )
+    try:
+        cleanup_auth_records()
+    except Exception as error:  # noqa: BLE001 - startup must survive a sweep failure
+        logging.getLogger(__name__).warning(
+            "Startup auth cleanup failed (%s); the app will still start",
             type(error).__name__,
         )
     yield
@@ -100,6 +108,7 @@ def create_app() -> FastAPI:
         return {
             "signups_enabled": bool(settings.SIGNUPS_ENABLED),
             "max_upload_mb": settings.MAX_UPLOAD_MB,
+            "email_verification_enabled": True,
             "allowed_extensions": [".pdf", ".txt"],
             "rerank_available": bool(settings.RERANK_ENABLED),
             "rerank_default": bool(settings.RERANK_ENABLED),

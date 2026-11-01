@@ -69,14 +69,14 @@ _DOCUMENT_MIGRATION_COLUMNS: dict[str, str] = {
     "chunk_overlap": "ALTER TABLE documents ADD COLUMN chunk_overlap INTEGER NULL",
 }
 
+_USER_MIGRATION_COLUMNS: dict[str, str] = {
+    "email_verified": "ALTER TABLE users ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT TRUE",
+    "password_changed_at": "ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP NULL",
+}
+
 
 def migrate_document_columns(target_engine=None) -> None:
-    """Add missing documents columns; idempotent and never drops data.
-
-    Runs ALTER TABLE ... ADD COLUMN for each column the live table does not
-    have yet, inside one transaction. Any failure is logged with a clear
-    message and re-raised so the app does not boot half-migrated.
-    """
+    """Add missing documents and users columns; idempotent and never drops data."""
     import logging
 
     from sqlalchemy import inspect, text
@@ -84,18 +84,39 @@ def migrate_document_columns(target_engine=None) -> None:
     logger = logging.getLogger("app.db")
     target = target_engine if target_engine is not None else engine
     with target.connect() as connection:
-        existing = {column["name"] for column in inspect(connection).get_columns("documents")}
-        for column, statement in _DOCUMENT_MIGRATION_COLUMNS.items():
-            if column in existing:
+        tables = set(inspect(connection).get_table_names())
+        for table, columns in (
+            ("documents", _DOCUMENT_MIGRATION_COLUMNS),
+            ("users", _USER_MIGRATION_COLUMNS),
+        ):
+            if table not in tables:
                 continue
-            try:
-                connection.execute(text(statement))
-            except Exception as error:
-                logger.error(
-                    "Startup migration failed for documents.%s (%s); the app "
-                    "will not start half-migrated.",
-                    column,
-                    error,
-                )
-                raise
+            existing = {
+                column["name"] for column in inspect(connection).get_columns(table)
+            }
+            for column, statement in columns.items():
+                if column in existing:
+                    continue
+                if (
+                    table == "users"
+                    and column == "password_changed_at"
+                    and connection.dialect.name == "postgresql"
+                ):
+                    statement = (
+                        "ALTER TABLE users ADD COLUMN password_changed_at "
+                        "TIMESTAMP WITH TIME ZONE NULL"
+                    )
+                else:
+                    statement = columns[column]
+                try:
+                    connection.execute(text(statement))
+                except Exception as error:
+                    logger.error(
+                        "Startup migration failed for %s.%s (%s); the app "
+                        "will not start half-migrated.",
+                        table,
+                        column,
+                        error,
+                    )
+                    raise
         connection.commit()

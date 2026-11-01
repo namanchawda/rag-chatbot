@@ -376,6 +376,30 @@ def _create_old_schema_engine() -> "object":
     return engine
 
 
+def _create_old_users_schema_engine() -> "object":
+    """An engine whose users table predates verification/password timestamps."""
+    engine = create_engine("sqlite://")
+    metadata = MetaData()
+    Table(
+        "users",
+        metadata,
+        Column("id", String(36), primary_key=True),
+        Column("email", String(255), nullable=False),
+        Column("password_hash", String(255), nullable=False),
+        Column("created_at", DateTime),
+    )
+    metadata.create_all(engine)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users (id, email, password_hash, created_at) "
+                "VALUES ('11111111-1111-1111-1111-111111111111', "
+                "'existing@example.com', 'old-hash', CURRENT_TIMESTAMP)"
+            )
+        )
+    return engine
+
+
 class TestStartupMigration:
     def test_old_table_gains_columns_and_rows_survive_as_recursive(self):
         engine = _create_old_schema_engine()
@@ -401,6 +425,20 @@ class TestStartupMigration:
                 text("SELECT count(*) FROM documents WHERE chunking_strategy = 'recursive'")
             ).scalar()
         assert rows == 1
+
+    def test_existing_users_remain_verified_and_migration_is_idempotent(self):
+        engine = _create_old_users_schema_engine()
+        migrate_document_columns(engine)
+        migrate_document_columns(engine)
+        with engine.connect() as connection:
+            columns = {
+                row[1] for row in connection.execute(text("PRAGMA table_info(users)"))
+            }
+            row = connection.execute(
+                text("SELECT email_verified, password_changed_at FROM users")
+            ).one()
+        assert {"email_verified", "password_changed_at"} <= columns
+        assert row == (1, None)
 
     def test_new_table_needs_no_migration(self, db_session):
         # The current ORM table already carries the columns: a no-op that

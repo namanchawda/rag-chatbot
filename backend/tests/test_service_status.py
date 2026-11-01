@@ -474,8 +474,10 @@ class TestAdminAuth:
                 json={"email": "Chief@Example.Com", "password": "longenough8"},
             )
         assert response.status_code == 201
-        assert response.json()["user"]["is_admin"] is True
-        assert response.json()["user"]["email"] == "chief@example.com"
+        assert response.json() == {
+            "status": "verification_required",
+            "email": "chief@example.com",
+        }
 
 
 class TestAdminStatusPayload:
@@ -484,7 +486,7 @@ class TestAdminStatusPayload:
             body = client.get("/admin/status")
         assert body.status_code == 200
         payload = body.json()
-        assert set(payload) == {"jina", "groq", "checked_at"}
+        assert set(payload) == {"jina", "groq", "email", "checked_at"}
         assert payload["jina"]["state"] == "unknown"
         assert set(payload["jina"]) == {
             "state", "http_status", "message", "last_success_at", "last_error_at",
@@ -496,6 +498,7 @@ class TestAdminStatusPayload:
             "state", "message", "last_success_at", "last_error_at", "answers_last_24h",
         }
         assert payload["groq"]["answers_last_24h"] == 0
+        assert payload["email"]["state"] == "unknown"
         # No API keys or key fragments anywhere in the response.
         assert "test-jina-key" not in body.text
         assert "test-groq-key" not in body.text

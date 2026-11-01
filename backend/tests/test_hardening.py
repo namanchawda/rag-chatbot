@@ -97,6 +97,14 @@ class TestStartupSweep:
         with TestClient(create_app()) as client:
             assert client.get("/health").json() == {"status": "ok"}
 
+    def test_failing_auth_cleanup_does_not_prevent_boot(self, monkeypatch):
+        def boom():
+            raise RuntimeError("auth cleanup exploded")
+
+        monkeypatch.setattr(main_module, "cleanup_auth_records", boom)
+        with TestClient(create_app()) as client:
+            assert client.get("/health").json() == {"status": "ok"}
+
 
 class TestDocumentCap:
     def test_rejects_before_reading_or_saving_the_file(self, db_session, users, monkeypatch):
@@ -307,7 +315,10 @@ class TestSignupToggle:
                 "/auth/signup", json={"email": "fresh@example.com", "password": "longenough123"}
             )
         assert response.status_code == 201
-        assert response.json()["user"]["email"] == "fresh@example.com"
+        assert response.json() == {
+            "status": "verification_required",
+            "email": "fresh@example.com",
+        }
 
     def test_config_endpoint_exposes_public_values(self, monkeypatch):
         from app.rag.chunking import describe_strategies
@@ -320,6 +331,7 @@ class TestSignupToggle:
         assert opened.status_code == 200
         assert opened.json() == {
             "signups_enabled": True,
+            "email_verification_enabled": True,
             "max_upload_mb": 25,
             "allowed_extensions": [".pdf", ".txt"],
             "rerank_available": True,
@@ -339,6 +351,7 @@ class TestSignupToggle:
         with TestClient(create_app()) as client:
             closed = client.get("/config")
         assert closed.json()["signups_enabled"] is False
+        assert closed.json()["email_verification_enabled"] is True
         assert closed.json()["max_upload_mb"] == 13
         assert closed.json()["rerank_available"] is False
         assert closed.json()["rerank_default"] is False

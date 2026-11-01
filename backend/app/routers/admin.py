@@ -5,7 +5,7 @@ endpoints look nonexistent. Responses carry states, timestamps and usage
 counts only - never API keys or key fragments, and the admin list itself is
 never exposed.
 
-GET    /admin/status           current payload for jina and groq
+GET    /admin/status           current payload for jina, groq, and email
 POST   /admin/status/check     ONE minimal Jina probe, recorded, then the
                                payload (cooldown STATUS_CHECK_COOLDOWN_SECONDS,
                                never calls Groq)

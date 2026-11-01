@@ -33,6 +33,23 @@ class LoginRequest(BaseModel):
         return _normalize_email(value)
 
 
+class EmailCodeRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, value: str) -> str:
+        return _normalize_email(value)
+
+
+class VerifyEmailRequest(EmailCodeRequest):
+    code: str
+
+
+class ResetPasswordRequest(VerifyEmailRequest):
+    new_password: str = Field(min_length=8)
+
+
 class UserResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

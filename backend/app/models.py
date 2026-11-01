@@ -8,13 +8,16 @@ from sqlalchemy import (
     Date,
     DateTime,
     Enum,
+    Boolean,
     ForeignKey,
     Index,
     Integer,
     JSON,
     String,
     Text,
+    CheckConstraint,
     UniqueConstraint,
+    text as sql_text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -44,6 +47,46 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=sql_text("TRUE"), nullable=False
+    )
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class AuthCode(Base):
+    __tablename__ = "auth_codes"
+    __table_args__ = (
+        CheckConstraint("purpose IN ('verify', 'reset')", name="ck_auth_codes_purpose"),
+        Index("ix_auth_codes_user_purpose_created", "user_id", "purpose", "created_at"),
+        Index(
+            "uq_auth_codes_active_user_purpose",
+            "user_id",
+            "purpose",
+            unique=True,
+            sqlite_where=sql_text("used_at IS NULL"),
+            postgresql_where=sql_text("used_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    purpose: Mapped[str] = mapped_column(String(10), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EmailDailyUsage(Base):
+    __tablename__ = "email_daily_usage"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    sends: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class Document(Base):

@@ -25,7 +25,7 @@ def create_access_token(user_id: uuid.UUID) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(user_id),
-        "iat": int(now.timestamp()),
+        "iat": now.timestamp(),
         "exp": int((now + timedelta(minutes=get_settings().JWT_EXPIRE_MINUTES)).timestamp()),
     }
     return jwt.encode(payload, get_settings().JWT_SECRET, algorithm=ALGORITHM)

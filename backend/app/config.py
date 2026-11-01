@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -52,8 +53,40 @@ class Settings(BaseSettings):
     JINA_LOW_BALANCE_PERCENT: int = 15
     # Minimum seconds between /admin/status/check calls.
     STATUS_CHECK_COOLDOWN_SECONDS: int = 30
+    EMAIL_BACKEND: str = "console"
+    BREVO_API_KEY: str = ""
+    EMAIL_FROM_ADDRESS: str = ""
+    EMAIL_FROM_NAME: str = "RAG Chatbot"
+    CODE_TTL_MINUTES: int = 15
+    CODE_MAX_ATTEMPTS: int = 5
+    EMAIL_RESEND_COOLDOWN_SECONDS: int = 60
+    MAX_EMAILS_PER_DAY: int = 250
+    UNVERIFIED_ACCOUNT_TTL_HOURS: int = 24
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
+
+    @field_validator("EMAIL_BACKEND")
+    @classmethod
+    def validate_email_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"console", "brevo"}:
+            raise ValueError("EMAIL_BACKEND must be either 'console' or 'brevo'")
+        return normalized
+
+
+def validate_email_settings(settings: Settings | None = None) -> None:
+    """Fail startup clearly when Brevo is selected without its credentials."""
+    current = settings or get_settings()
+    if current.EMAIL_BACKEND == "brevo":
+        missing = []
+        if not current.BREVO_API_KEY.strip():
+            missing.append("BREVO_API_KEY")
+        if not current.EMAIL_FROM_ADDRESS.strip():
+            missing.append("EMAIL_FROM_ADDRESS")
+        if missing:
+            raise RuntimeError(
+                "EMAIL_BACKEND=brevo requires " + " and ".join(missing) + "."
+            )
 
 
 @lru_cache

@@ -1,3 +1,4 @@
+from datetime import timezone
 import uuid
 
 from fastapi import Depends, HTTPException, status
@@ -27,4 +28,15 @@ def get_current_user(
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    if user.password_changed_at is not None:
+        try:
+            issued_timestamp = float(payload.get("iat"))
+            changed_at = user.password_changed_at
+            if changed_at.tzinfo is None:
+                changed_at = changed_at.replace(tzinfo=timezone.utc)
+            changed_timestamp = changed_at.timestamp()
+        except (TypeError, ValueError, OverflowError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        if issued_timestamp < changed_timestamp:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return user

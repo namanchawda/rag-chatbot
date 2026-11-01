@@ -1,4 +1,4 @@
-"""Best-effort service usage and status tracking for Jina and Groq.
+"""Best-effort service usage and status tracking for Jina, Groq, and email.
 
 Every write goes to the small service_usage / service_status tables and is
 wrapped in try/except: a recording failure is logged (type name only, no
@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 SERVICE_JINA = "jina"
 SERVICE_GROQ = "groq"
+SERVICE_EMAIL = "email"
 
 STATE_OK = "ok"
 STATE_INVALID_KEY = "invalid_key"
@@ -111,11 +112,17 @@ def classify_failure(
 
     Groq: 401 invalid_key; 429 rate_limited (Retry-After in the message when
     present); 5xx or network errors unavailable; everything else error.
+    Email: provider and network failures are reduced to safe generic messages.
     """
-    if service not in (SERVICE_JINA, SERVICE_GROQ):
+    if service not in (SERVICE_JINA, SERVICE_GROQ, SERVICE_EMAIL):
         raise ValueError(f"Unknown service: {service}")
     body = body_text or ""
-    if service == SERVICE_JINA:
+    if service == SERVICE_EMAIL:
+        if http_status is None or http_status >= 500:
+            state, message = STATE_UNAVAILABLE, "Email delivery is unavailable"
+        else:
+            state, message = STATE_ERROR, "Email delivery failed"
+    elif service == SERVICE_JINA:
         if http_status in (401, 403):
             state, message = STATE_INVALID_KEY, body
         elif http_status == 402:
@@ -353,6 +360,12 @@ def status_payload() -> dict:
         )
 
         groq_row = db.get(ServiceStatus, SERVICE_GROQ)
+        email_row = db.get(ServiceStatus, SERVICE_EMAIL)
+        email_usage = db.scalar(
+            select(ServiceUsage).where(
+                ServiceUsage.service == SERVICE_EMAIL, ServiceUsage.day == day
+            )
+        )
 
     settings = get_settings()
     budget = settings.JINA_TOKEN_BUDGET
@@ -385,6 +398,15 @@ def status_payload() -> dict:
             "last_success_at": groq_row.last_success_at if groq_row is not None else None,
             "last_error_at": groq_row.last_error_at if groq_row is not None else None,
             "answers_last_24h": answers_last_24h,
+        },
+        "email": {
+            "state": email_row.state if email_row is not None else STATE_UNKNOWN,
+            "http_status": email_row.http_status if email_row is not None else None,
+            "message": email_row.message if email_row is not None else None,
+            "last_success_at": email_row.last_success_at if email_row is not None else None,
+            "last_error_at": email_row.last_error_at if email_row is not None else None,
+            "sends_today": int(email_usage.requests) if email_usage is not None else 0,
+            "errors_today": int(email_usage.errors) if email_usage is not None else 0,
         },
         "checked_at": now,
     }
