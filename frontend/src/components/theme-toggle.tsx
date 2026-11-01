@@ -101,7 +101,7 @@ export function ThemeToggle({ className }: { className?: string }) {
           aria-label={label}
           aria-pressed={choice === value}
           onClick={() => select(value)}
-          className={`flex h-7 w-7 items-center justify-center rounded-full transition active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+          className={`flex h-11 w-11 items-center justify-center rounded-full transition active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
             choice === value
               ? "bg-card text-foreground shadow-sm"
               : "text-muted hover:text-foreground"

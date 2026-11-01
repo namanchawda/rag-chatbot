@@ -60,7 +60,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
       <p className="text-2xl font-semibold tracking-tight text-foreground">
         {formatNumber(value)}
       </p>
-      <p className="mt-0.5 text-xs font-medium text-muted">{label}</p>
+      <p className="mt-1 text-base font-medium text-muted">{label}</p>
     </div>
   );
 }
@@ -290,23 +290,28 @@ export default function DatabasePage() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
-    <main className="flex-1 p-6 md:p-10">
-      <div className="mx-auto max-w-5xl">
+    <main className="min-w-0 flex-1 px-5 py-8 sm:px-8 sm:py-12 lg:px-12 lg:py-14">
+      <div className="mx-auto w-full max-w-6xl">
         <div className="animate-appear">
-          <h1 className="text-3xl font-semibold text-foreground">Database</h1>
-          <p className="mt-2 text-muted">
+          <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
+            Indexed source library
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            Database
+          </h1>
+          <p className="mt-2 max-w-2xl text-base leading-7 text-muted">
             Browse the exact chunks indexed from your documents. This view is
             read-only.
           </p>
         </div>
 
-        <div className="mt-6 grid grid-cols-3 gap-3">
+        <div className="mt-7 grid grid-cols-3 gap-2 sm:gap-3">
           <StatCard label="Documents" value={stats?.documents ?? 0} />
           <StatCard label="Chunks" value={stats?.chunks ?? 0} />
           <StatCard label="Characters" value={stats?.characters ?? 0} />
         </div>
         {statsError && (
-          <p role="status" className="mt-2 text-xs text-muted">
+          <p role="status" className="mt-2 text-base text-muted">
             Could not load the totals — they may show 0. Retry the list below to
             refill them.
           </p>
@@ -316,7 +321,7 @@ export default function DatabasePage() {
           <div className="md:w-64">
             <label
               htmlFor="database-document"
-              className="mb-1.5 block text-xs font-medium text-muted"
+              className="mb-1.5 block text-base font-medium text-muted"
             >
               Document
             </label>
@@ -325,7 +330,7 @@ export default function DatabasePage() {
               value={documentFilter}
               onChange={(event) => selectDocument(event.target.value)}
               disabled={documents === null}
-              className="w-full rounded-xl border border-input-border bg-input px-3 py-2 text-sm text-foreground transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
+              className="h-12 w-full rounded-xl border border-input-border bg-input px-3 text-base text-foreground transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
             >
               <option value="">All documents</option>
               {readyDocuments?.map((document) => (
@@ -338,7 +343,7 @@ export default function DatabasePage() {
           <div className="flex-1">
             <label
               htmlFor="database-search"
-              className="mb-1.5 block text-xs font-medium text-muted"
+              className="mb-1.5 block text-base font-medium text-muted"
             >
               Search chunk text
             </label>
@@ -350,14 +355,14 @@ export default function DatabasePage() {
                 maxLength={MAX_QUERY_CHARS}
                 onChange={(event) => setQueryInput(event.target.value)}
                 placeholder="Find text inside chunks…"
-                className="w-full rounded-xl border border-input-border bg-input px-3.5 py-2 pr-9 text-sm text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
+                className="h-12 w-full rounded-xl border border-input-border bg-input px-3.5 pr-12 text-base text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
               />
               {queryInput.length > 0 && (
                 <button
                   type="button"
                   onClick={() => setQueryInput("")}
                   aria-label="Clear search"
-                  className="absolute right-1.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="absolute right-1 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   ✕
                 </button>
@@ -367,11 +372,11 @@ export default function DatabasePage() {
         </div>
 
         {noReadyDocuments ? (
-          <div className="animate-appear mt-6 rounded-[24px] border border-card-border bg-card p-10 text-center shadow-card backdrop-blur-2xl">
+          <div className="animate-appear mt-6 rounded-2xl border border-card-border bg-card p-10 text-center shadow-card">
             <p className="text-lg font-semibold text-foreground">
               Nothing indexed yet
             </p>
-            <p className="mt-2 text-sm text-muted">
+            <p className="mt-2 text-base text-muted">
               Chunks appear here after a document finishes processing.{" "}
               <Link
                 href="/documents"
@@ -389,7 +394,7 @@ export default function DatabasePage() {
             role="alert"
             className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-red-400/30 bg-red-500/10 p-5"
           >
-            <p className="text-sm text-red-600 dark:text-red-400">
+            <p className="text-base text-red-600 dark:text-red-400">
               {listError}
             </p>
             <button
@@ -400,17 +405,17 @@ export default function DatabasePage() {
                 setListError(null);
                 setReloadNonce((value) => value + 1);
               }}
-              className="rounded-full border border-red-400/40 px-4 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/10 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
+              className="min-h-11 rounded-full border border-red-400/40 px-4 text-base font-medium text-red-600 transition hover:bg-red-500/10 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
             >
               Retry
             </button>
           </div>
         ) : items.length === 0 ? (
-          <div className="animate-appear mt-6 rounded-[24px] border border-card-border bg-card p-10 text-center shadow-card backdrop-blur-2xl">
+          <div className="animate-appear mt-6 rounded-2xl border border-card-border bg-card p-10 text-center shadow-card">
             <p className="text-lg font-semibold text-foreground">
               {hasFilters ? "No chunks match" : "No chunks yet"}
             </p>
-            <p className="mt-2 text-sm text-muted">
+            <p className="mt-2 text-base text-muted">
               {hasFilters
                 ? "Try a different search, or clear the filters."
                 : "Chunks appear here after your documents finish processing."}
@@ -419,7 +424,7 @@ export default function DatabasePage() {
               <button
                 type="button"
                 onClick={clearFilters}
-                className="mt-4 rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="mt-4 min-h-11 rounded-full border border-card-border px-4 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 Clear filters
               </button>
@@ -427,14 +432,14 @@ export default function DatabasePage() {
           </div>
         ) : (
           <>
-            <p aria-live="polite" className="mt-6 px-1 text-sm text-muted">
+            <p aria-live="polite" className="mt-6 px-1 text-base text-muted">
               Showing {formatNumber(rangeStart)}–{formatNumber(rangeEnd)} of{" "}
               {formatNumber(total)} chunks
             </p>
 
             {/* Wide screens: real table with labeled headers. */}
-            <div className="mt-3 hidden overflow-hidden rounded-[20px] border border-card-border bg-card shadow-card backdrop-blur-2xl md:block">
-              <table className="w-full table-fixed border-collapse text-left text-sm">
+            <div className="mt-3 hidden min-w-0 overflow-x-auto rounded-2xl border border-card-border bg-card shadow-card lg:block">
+              <table className="w-full min-w-[800px] table-fixed border-collapse text-left text-sm">
                 <caption className="sr-only">
                   Indexed chunks from your documents
                 </caption>
@@ -481,7 +486,7 @@ export default function DatabasePage() {
                           {formatNumber(chunk.char_count)}
                         </td>
                         <td className="px-4 py-3">
-                          <p className="break-words font-mono text-xs leading-relaxed text-muted">
+                          <p className="break-words font-mono text-sm leading-relaxed text-muted">
                             {highlightText(displayText, query)}
                           </p>
                           <div className="mt-1.5 flex items-center gap-3">
@@ -490,7 +495,7 @@ export default function DatabasePage() {
                                 type="button"
                                 onClick={() => toggleExpanded(chunk.id)}
                                 aria-expanded={isExpanded}
-                                className="rounded-md text-xs font-medium text-accent transition hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                className="min-h-11 rounded-md px-2 text-sm font-medium text-accent transition hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                               >
                                 {isExpanded ? "Show less" : "Show more"}
                               </button>
@@ -498,7 +503,7 @@ export default function DatabasePage() {
                             <button
                               type="button"
                               onClick={() => void copyChunk(chunk.id, chunk.text)}
-                              className="rounded-md text-xs font-medium text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                              className="min-h-11 rounded-md px-2 text-sm font-medium text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                             >
                               {copiedId === chunk.id ? "Copied" : "Copy"}
                             </button>
@@ -512,7 +517,7 @@ export default function DatabasePage() {
             </div>
 
             {/* Narrow screens: stacked cards instead of a squeezed table. */}
-            <ul className="mt-3 space-y-3 md:hidden">
+            <ul className="mt-3 space-y-3 lg:hidden">
               {items.map((chunk, index) => {
                 const isExpanded = expandedIds.has(chunk.id);
                 const displayText =
@@ -527,17 +532,17 @@ export default function DatabasePage() {
                   >
                     <div className="flex items-center justify-between gap-3">
                       <p
-                        className="truncate text-[13px] font-semibold text-foreground"
+                        className="truncate text-base font-semibold text-foreground"
                         title={chunk.source}
                       >
                         📄 {chunk.source}
                       </p>
-                      <p className="shrink-0 text-xs text-muted">
+                      <p className="shrink-0 text-base text-muted">
                         #{chunk.chunk_index} · {formatNumber(chunk.char_count)}{" "}
                         chars
                       </p>
                     </div>
-                    <p className="mt-2 break-words font-mono text-xs leading-relaxed text-muted">
+                    <p className="mt-2 break-words font-mono text-base leading-7 text-muted">
                       {highlightText(displayText, query)}
                     </p>
                     <div className="mt-2 flex items-center gap-3">
@@ -546,7 +551,7 @@ export default function DatabasePage() {
                           type="button"
                           onClick={() => toggleExpanded(chunk.id)}
                           aria-expanded={isExpanded}
-                          className="rounded-md text-xs font-medium text-accent transition hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                          className="min-h-11 rounded-md px-2 text-sm font-medium text-accent transition hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                         >
                           {isExpanded ? "Show less" : "Show more"}
                         </button>
@@ -554,7 +559,7 @@ export default function DatabasePage() {
                       <button
                         type="button"
                         onClick={() => void copyChunk(chunk.id, chunk.text)}
-                        className="rounded-md text-xs font-medium text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className="min-h-11 rounded-md px-2 text-sm font-medium text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       >
                         {copiedId === chunk.id ? "Copied" : "Copy"}
                       </button>
@@ -569,11 +574,11 @@ export default function DatabasePage() {
                 type="button"
                 disabled={page <= 1}
                 onClick={() => setPage((current) => Math.max(1, current - 1))}
-                className="rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
+                className="min-h-11 rounded-full border border-card-border px-4 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
               >
                 ← Previous
               </button>
-              <p className="text-xs text-muted">
+              <p className="text-base text-muted">
                 Page {formatNumber(page)} of {formatNumber(totalPages)}
               </p>
               <button
@@ -582,7 +587,7 @@ export default function DatabasePage() {
                   page >= totalPages || rangeEnd >= total
                 }
                 onClick={() => setPage((current) => current + 1)}
-                className="rounded-full border border-card-border px-4 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
+                className="min-h-11 rounded-full border border-card-border px-4 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next →
               </button>

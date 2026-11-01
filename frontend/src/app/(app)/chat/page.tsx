@@ -137,7 +137,7 @@ function TypingIndicator() {
 // `table` is wrapped in a scrollable container so wide tables never overflow.
 function AssistantMarkdown({ content }: { content: string }) {
   return (
-    <div className="chat-markdown text-[15px] leading-relaxed text-foreground">
+    <div className="chat-markdown text-base leading-relaxed text-foreground sm:text-[15px]">
       <Markdown
         remarkPlugins={[remarkGfm]}
         components={{
@@ -169,7 +169,7 @@ function RerankSwitch({
   return (
     <label
       title="Re-scores retrieved passages for relevance, so sources fit the question better. Slightly slower."
-      className="inline-flex cursor-pointer items-center gap-2 rounded-md text-xs font-medium text-muted transition hover:text-foreground"
+      className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-2 text-sm font-medium text-muted transition hover:text-foreground"
     >
       <input
         type="checkbox"
@@ -211,7 +211,7 @@ function SourcesDisclosure({
         type="button"
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
-        className="rounded-md text-xs font-medium text-muted transition hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="min-h-11 rounded-lg px-2 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         {open ? "▾" : "▸"} Sources ({sources.length})
       </button>
@@ -219,12 +219,14 @@ function SourcesDisclosure({
         <ul className="mt-2.5 space-y-3">
           {groupSourcesByFile(sources).map(([filename, items]) => (
             <li key={filename}>
-              <p className="text-xs font-semibold text-foreground">📄 {filename}</p>
+              <p className="break-all text-sm font-semibold text-foreground">
+                📄 {filename}
+              </p>
               <ul className="mt-1.5 space-y-1.5">
                 {items.map((item) => (
                   <li
                     key={`${item.document_id}:${item.chunk_index}`}
-                    className="rounded-lg bg-active px-3 py-2 text-xs leading-relaxed text-muted"
+                    className="rounded-lg bg-active px-3 py-2 text-sm leading-relaxed text-muted"
                   >
                     {/* Same raw numbering as the Database page's "#" column.
                         Old saved messages may lack chunk_index: no pill then. */}
@@ -295,6 +297,32 @@ function ChatWorkspace() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const drawerRef = useRef<HTMLDivElement>(null);
   const drawerToggleRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const shell = scrollRef.current?.closest<HTMLElement>(".app-shell");
+    if (!shell) return;
+
+    const previousHeight = shell.style.height;
+    const visualViewport = window.visualViewport;
+    const updateShellHeight = () => {
+      const height = visualViewport
+        ? visualViewport.height + visualViewport.offsetTop
+        : window.innerHeight;
+      shell.style.height = `${Math.round(height)}px`;
+    };
+
+    updateShellHeight();
+    visualViewport?.addEventListener("resize", updateShellHeight);
+    visualViewport?.addEventListener("scroll", updateShellHeight);
+    window.addEventListener("resize", updateShellHeight);
+
+    return () => {
+      visualViewport?.removeEventListener("resize", updateShellHeight);
+      visualViewport?.removeEventListener("scroll", updateShellHeight);
+      window.removeEventListener("resize", updateShellHeight);
+      shell.style.height = previousHeight;
+    };
+  }, []);
 
   // Rerank: availability/defaults from /config, remembered choice from
   // localStorage. The switch stays hidden until /config says it is available.
@@ -814,7 +842,7 @@ function ChatWorkspace() {
         sessions={sessions}
         error={listError}
         activeSessionId={activeSessionId}
-        className="hidden w-72 shrink-0 border-r min-[900px]:flex"
+        className="hidden w-72 shrink-0 border-r border-card-border min-[900px]:flex"
         onSelect={(sessionId) => openSession(sessionId, true)}
         onNewChat={() => {
           openSession(null, true);
@@ -855,22 +883,34 @@ function ChatWorkspace() {
               onDelete={handleDelete}
               onRetry={loadSessions}
               onDismissError={() => setListError(null)}
+              onClose={() => setDrawerOpen(false)}
             />
           </div>
         </div>
       )}
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center gap-2 border-b border-card-border bg-card/60 px-4 py-2 min-[900px]:hidden">
+        <div className="flex min-h-14 shrink-0 items-center gap-3 border-b border-card-border bg-card/70 px-3 sm:px-5">
           <button
             ref={drawerToggleRef}
             type="button"
             onClick={() => setDrawerOpen(true)}
             aria-label="Open conversations"
-            className="rounded-lg px-2 py-1.5 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-xl border border-card-border bg-background px-3 text-sm font-semibold text-foreground shadow-sm transition hover:bg-active active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent min-[900px]:hidden"
           >
-            ☰ Conversations
+            <span aria-hidden="true">☰</span>
+            History
           </button>
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold text-foreground">
+              Chat
+            </h1>
+            <p className="truncate text-sm text-muted">
+              {readyCount > 0
+                ? `Grounded in ${readyCount} ${readyCount === 1 ? "document" : "documents"}`
+                : "Ask a question about your library"}
+            </p>
+          </div>
         </div>
 
         {/* Message list: the one scrolling region. It is absolutely placed
@@ -880,30 +920,30 @@ function ChatWorkspace() {
           <div
             ref={scrollRef}
             onScroll={handleScroll}
-            className="app-scroll absolute inset-0 overflow-y-auto overscroll-contain px-6 pb-6 pt-8 md:px-10"
+            className="app-scroll absolute inset-0 overflow-y-auto overscroll-contain px-3 pb-5 pt-5 sm:px-6 sm:pt-8 md:px-10"
           >
           <div className="mx-auto max-w-3xl space-y-5">
             {isEmptyNewChat ? (
-              <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-14 text-center">
+              <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-8 text-center sm:pt-14">
                 <span
                   aria-hidden="true"
                   className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-accent text-2xl text-white shadow-card"
                 >
                   ✦
                 </span>
-                <h1 className="mt-5 text-2xl font-semibold tracking-tight text-foreground">
+                <h2 className="mt-5 max-w-xl text-[26px] font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
                   Hey — ask anything about your documents
-                </h1>
+                </h2>
                 {documents === null ? (
-                  <p className="mt-2 text-sm text-muted">Loading your library…</p>
+                  <p className="mt-2 text-base text-muted">Loading your library…</p>
                 ) : readyCount > 0 ? (
-                  <p className="mt-2 text-sm text-muted">
+                  <p className="mt-2 max-w-xl text-base leading-6 text-muted">
                     Chatting across {readyCount}{" "}
                     {readyCount === 1 ? "document" : "documents"} — answers stay
                     grounded in them.
                   </p>
                 ) : (
-                  <p className="mt-2 text-sm text-muted">
+                  <p className="mt-2 max-w-xl text-base leading-6 text-muted">
                     No ready documents yet.{" "}
                     <Link
                       href="/documents"
@@ -924,7 +964,7 @@ function ChatWorkspace() {
                           handleChange(question);
                           textareaRef.current?.focus();
                         }}
-                        className="rounded-full border border-card-border bg-card px-4 py-2 text-sm text-muted shadow-card backdrop-blur-2xl transition hover:border-accent/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        className="min-h-11 rounded-full border border-card-border bg-card px-4 py-2 text-sm text-muted shadow-card transition hover:border-accent/50 hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                       >
                         {question}
                       </button>
@@ -938,8 +978,8 @@ function ChatWorkspace() {
               messages.map((message) => {
                 if (message.role === "user") {
                   return (
-                    <div key={message.id} className="animate-appear flex justify-end">
-                      <div className="max-w-[80%] whitespace-pre-wrap rounded-[20px] bg-accent px-4 py-2.5 text-[15px] leading-relaxed text-white shadow-card">
+                    <div key={message.id} className="animate-appear flex min-w-0 justify-end">
+                    <div className="max-w-[94%] whitespace-pre-wrap break-words rounded-[20px] bg-accent px-4 py-3 text-base leading-relaxed text-white shadow-card sm:max-w-[80%] sm:text-[15px] [overflow-wrap:anywhere]">
                         {message.content}
                       </div>
                     </div>
@@ -950,7 +990,7 @@ function ChatWorkspace() {
                 return (
                   <div
                     key={message.id}
-                    className="animate-appear max-w-[85%] rounded-[20px] border border-card-border bg-card px-4 py-3 shadow-card backdrop-blur-2xl"
+                    className="animate-appear min-w-0 max-w-[94%] rounded-[20px] border border-card-border bg-card px-4 py-3 shadow-card [overflow-wrap:anywhere] sm:max-w-[85%]"
                   >
                     {message.content.length > 0 ? (
                       <div aria-live={isStreaming ? "polite" : undefined}>
@@ -1043,7 +1083,7 @@ function ChatWorkspace() {
           )}
         </div>
 
-        <div className="shrink-0 border-t border-card-border bg-card/80 px-6 py-4 backdrop-blur-2xl md:px-10">
+        <div className="shrink-0 border-t border-card-border bg-card/90 px-3 py-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur-2xl sm:px-6 sm:py-4 sm:pb-4 md:px-10">
           <div className="mx-auto max-w-3xl">
             {rerankAvailable && (
               <div className="mb-2 flex">
@@ -1063,7 +1103,7 @@ function ChatWorkspace() {
                 aria-label="Your question"
                 onChange={(event) => handleChange(event.target.value)}
                 onKeyDown={handleComposerKeyDown}
-                className="min-h-[44px] flex-1 resize-none overflow-hidden rounded-[20px] border border-input-border bg-input px-4 py-2.5 text-[15px] leading-relaxed text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60"
+                className="min-h-11 min-w-0 flex-1 resize-none overflow-hidden rounded-[20px] border border-input-border bg-input px-4 py-2.5 text-base leading-relaxed text-foreground placeholder:text-muted transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring disabled:opacity-60 sm:text-[15px]"
               />
               {streamingQuestion === null ? (
                 <button

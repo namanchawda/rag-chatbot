@@ -45,7 +45,7 @@ function displayTitle(session: SessionItem): string {
 }
 
 const iconButtonClass =
-  "flex h-7 w-7 items-center justify-center rounded-lg text-xs text-muted transition hover:bg-active hover:text-foreground active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  "flex h-11 w-11 items-center justify-center rounded-lg text-sm text-muted transition hover:bg-active hover:text-foreground active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
 function SessionRow({
   session,
@@ -97,7 +97,7 @@ function SessionRow({
             }
           }}
           onChange={(event) => setDraft(event.target.value)}
-          className="w-full rounded-xl border border-input-border bg-input px-3 py-2 text-sm text-foreground transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring"
+          className="min-h-11 w-full rounded-xl border border-input-border bg-input px-3 py-2 text-base text-foreground transition focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring"
         />
       </li>
     );
@@ -122,7 +122,7 @@ function SessionRow({
           type="button"
           onClick={() => onSelect(session.id)}
           aria-current={active ? "true" : undefined}
-          className="min-w-0 flex-1 truncate rounded-xl px-3 py-2 text-left text-sm text-foreground transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="min-h-11 min-w-0 flex-1 truncate rounded-xl px-3 py-2 text-left text-base text-foreground transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
           {title}
         </button>
@@ -161,14 +161,14 @@ function SessionRow({
                   setMode("view");
                   void onDelete(session.id);
                 }}
-                className="rounded-md border border-red-500/30 bg-red-500/10 px-1.5 py-0.5 font-medium text-red-600 transition hover:bg-red-500/20 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
+                className="min-h-11 rounded-lg border border-red-500/30 bg-red-500/10 px-3 font-medium text-red-600 transition hover:bg-red-500/20 active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
               >
                 Yes
               </button>
               <button
                 type="button"
                 onClick={() => setMode("view")}
-                className="rounded-md border border-card-border px-1.5 py-0.5 font-medium text-foreground transition hover:bg-active active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="min-h-11 rounded-lg border border-card-border px-3 font-medium text-foreground transition hover:bg-active active:scale-[0.95] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 No
               </button>
@@ -185,6 +185,7 @@ export type ConversationsPanelProps = {
   error: string | null;
   activeSessionId: string | null;
   className?: string;
+  onClose?: () => void;
   onSelect: (sessionId: string) => void;
   onNewChat: () => void;
   onRename: (sessionId: string, title: string) => Promise<void>;
@@ -204,20 +205,31 @@ export function ConversationsPanel({
   onDelete,
   onRetry,
   onDismissError,
+  onClose,
 }: ConversationsPanelProps) {
   const groups = sessions ? groupSessionsByRecency(sessions) : [];
   const retryable = sessions === null && error !== null;
 
   return (
-    <div className={`flex flex-col border-card-border bg-card/50 ${className}`}>
-      <div className="shrink-0 border-b border-card-border p-2.5">
+    <div className={`flex min-w-0 flex-col border-card-border bg-card/50 ${className}`}>
+      <div className="flex shrink-0 items-center gap-2 border-b border-card-border p-2.5">
         <button
           type="button"
           onClick={onNewChat}
-          className="w-full rounded-xl border border-card-border bg-input px-3 py-2 text-sm font-medium text-foreground transition hover:bg-active active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          className="min-h-11 min-w-0 flex-1 rounded-xl bg-accent px-3 py-2 text-base font-semibold text-white transition hover:bg-accent-hover active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         >
-          ＋ New chat
+          + New chat
         </button>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close conversations"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-card-border text-lg text-muted transition hover:bg-active hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        )}
       </div>
 
       {error && (

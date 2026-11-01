@@ -57,7 +57,7 @@ function StatusBadge({ document }: { document: DocumentItem }) {
   if (document.status === "processing") {
     return (
       <span
-        className="inline-flex items-center gap-1.5 rounded-full bg-active px-2.5 py-1 text-xs font-medium text-muted"
+        className="inline-flex min-h-8 items-center gap-1.5 rounded-full bg-active px-2.5 py-1 text-base font-medium text-muted"
         title="Processing"
       >
         <span
@@ -72,7 +72,7 @@ function StatusBadge({ document }: { document: DocumentItem }) {
   if (document.status === "ready") {
     return (
       <span
-        className="inline-flex items-center rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-600 dark:text-emerald-400"
+        className="inline-flex min-h-8 items-center rounded-full bg-emerald-500/15 px-2.5 py-1 text-base font-medium text-emerald-600 dark:text-emerald-400"
         title="Ready for chat"
       >
         Ready · {plural(document.chunk_count, "chunk")}
@@ -82,7 +82,7 @@ function StatusBadge({ document }: { document: DocumentItem }) {
 
   return (
     <span
-      className="inline-flex items-center rounded-full bg-red-500/15 px-2.5 py-1 text-xs font-medium text-red-600 dark:text-red-400"
+      className="inline-flex min-h-8 items-center rounded-full bg-red-500/15 px-2.5 py-1 text-base font-medium text-red-600 dark:text-red-400"
       title="Processing failed"
     >
       Failed
@@ -274,11 +274,16 @@ export default function DocumentsPage() {
   }
 
   return (
-    <main className="flex-1 p-6 md:p-10">
-      <div className="mx-auto max-w-3xl">
+    <main className="flex-1 px-5 py-8 sm:px-8 sm:py-12 lg:px-12 lg:py-14">
+      <div className="mx-auto w-full max-w-6xl">
         <div className="animate-appear">
-          <h1 className="text-3xl font-semibold text-foreground">Documents</h1>
-          <p className="mt-2 text-muted">
+          <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
+            Your source library
+          </p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+            Documents
+          </h1>
+          <p className="mt-2 max-w-2xl text-base leading-7 text-muted">
             Upload files to build your knowledge base. Documents are chunked and
             indexed automatically.
           </p>
@@ -289,73 +294,77 @@ export default function DocumentsPage() {
             role="alert"
             className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-[24px] border border-red-400/30 bg-red-500/10 p-5"
           >
-            <p className="text-sm text-red-600 dark:text-red-400">
+            <p className="text-base text-red-600 dark:text-red-400">
               {loadError}
             </p>
             <button
               type="button"
               onClick={() => void loadDocuments()}
-              className="rounded-full border border-red-400/40 px-4 py-1.5 text-sm font-medium text-red-600 transition hover:bg-red-500/10 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
+              className="min-h-11 rounded-full border border-red-400/40 px-4 text-base font-medium text-red-600 transition hover:bg-red-500/10 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent dark:text-red-400"
             >
               Try again
             </button>
           </div>
         )}
 
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Upload documents. Drag and drop or browse files."
-          onClick={openFilePicker}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" || event.key === " ") {
-              event.preventDefault();
-              openFilePicker();
-            }
-          }}
-          onDragOver={(event) => {
-            event.preventDefault();
-            if (!isUploading) setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragOver(false);
-            void handleFiles(event.dataTransfer.files);
-          }}
-          className={`animate-appear mt-8 flex w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-[24px] border-2 border-dashed px-8 py-14 text-center transition ${
-            dragOver
-              ? "scale-[1.01] border-accent bg-accent/10"
-              : "border-card-border bg-card/50 hover:border-accent/50 hover:bg-active"
-          } ${isUploading ? "opacity-60" : ""}`}
-        >
-          <span
-            aria-hidden="true"
-            className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-xl text-accent"
-          >
-            ⬆
-          </span>
-          <span className="text-lg font-semibold text-foreground">
-            Drag &amp; drop files here
-          </span>
-          <span className="text-sm text-muted">{dropZoneLabel(uploadConfig)}</span>
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              openFilePicker();
+        <div className="animate-appear mt-7 rounded-[28px] border border-card-border bg-card p-4 shadow-card sm:p-6">
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Upload documents. Drag and drop or browse files."
+            onClick={openFilePicker}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openFilePicker();
+              }
             }}
-            disabled={isUploading}
-            className="mt-3 inline-flex h-10 items-center justify-center gap-2 rounded-full bg-accent px-5 text-sm font-medium text-white shadow-sm transition hover:bg-accent-hover active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+            onDragOver={(event) => {
+              event.preventDefault();
+              if (!isUploading) setDragOver(true);
+            }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragOver(false);
+              void handleFiles(event.dataTransfer.files);
+            }}
+            className={`flex min-h-64 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-9 text-center transition sm:min-h-72 sm:px-8 sm:py-12 ${
+              dragOver
+                ? "scale-[1.01] border-accent bg-accent/10"
+                : "border-card-border bg-background/60 hover:border-accent/50 hover:bg-active"
+            } ${isUploading ? "opacity-60" : ""}`}
           >
-            {isUploading && <SmallSpinner />}
-            {isUploading ? "Uploading…" : "Browse files"}
-          </button>
-          {dragOver && (
-            <span className="text-sm font-medium text-accent">
-              Drop to upload
+            <span
+              aria-hidden="true"
+              className="flex h-12 w-12 items-center justify-center rounded-2xl bg-accent/10 text-xl text-accent"
+            >
+              ⬆
             </span>
-          )}
+            <span className="text-lg font-semibold text-foreground">
+              Drag &amp; drop files here
+            </span>
+            <span className="text-base leading-6 text-muted">
+              {dropZoneLabel(uploadConfig)}
+            </span>
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                openFilePicker();
+              }}
+              disabled={isUploading}
+              className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-accent px-5 text-base font-medium text-white shadow-sm transition hover:bg-accent-hover active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isUploading && <SmallSpinner />}
+              {isUploading ? "Uploading…" : "Browse files"}
+            </button>
+            {dragOver && (
+              <span className="text-base font-medium text-accent">
+                Drop to upload
+              </span>
+            )}
+          </div>
         </div>
 
         <input
@@ -374,7 +383,7 @@ export default function DocumentsPage() {
           {rejectMessages.map((message) => (
             <p
               key={message}
-              className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400"
+              className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-base text-red-600 dark:text-red-400"
             >
               {message}
             </p>
@@ -382,13 +391,13 @@ export default function DocumentsPage() {
           {uploadError && (
             <p
               role="alert"
-              className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-sm text-red-600 dark:text-red-400"
+              className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 text-base text-red-600 dark:text-red-400"
             >
               {uploadError}
             </p>
           )}
           {liveMessage && (
-            <p role="status" className="px-1 text-sm text-muted">
+            <p role="status" className="px-1 text-base text-muted">
               {liveMessage}
             </p>
           )}
@@ -399,7 +408,7 @@ export default function DocumentsPage() {
             {[0, 1, 2].map((index) => (
               <li
                 key={index}
-                className="animate-pulse rounded-[24px] border border-card-border bg-card p-5 shadow-card backdrop-blur-2xl"
+                className="animate-pulse rounded-2xl border border-card-border bg-card p-5 shadow-card"
               >
                 <div className="h-4 w-2/5 rounded-full bg-active" />
                 <div className="mt-3 flex gap-3">
@@ -412,11 +421,11 @@ export default function DocumentsPage() {
         )}
 
         {documents !== null && documents.length === 0 && !loadError && (
-          <div className="animate-appear mt-6 rounded-[24px] border border-card-border bg-card p-10 text-center shadow-card backdrop-blur-2xl">
+          <div className="animate-appear mt-6 rounded-2xl border border-card-border bg-card p-10 text-center shadow-card">
             <p className="text-lg font-semibold text-foreground">
               Upload your first document
             </p>
-            <p className="mt-2 text-sm text-muted">
+            <p className="mt-2 text-base text-muted">
               Add a file above and it will appear here.
             </p>
           </div>
@@ -431,31 +440,31 @@ export default function DocumentsPage() {
                 return (
                   <li
                     key={document.id}
-                    className="animate-appear rounded-[24px] border border-card-border bg-card p-5 shadow-card backdrop-blur-2xl"
+                    className="animate-appear rounded-2xl border border-card-border bg-card p-4 shadow-card sm:p-5"
                     style={{
                       animationDelay: `${Math.min(index * 50, 250)}ms`,
                     }}
                   >
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
                       <div className="min-w-0">
                         <p
-                          className="truncate text-[15px] font-semibold text-foreground"
+                          className="truncate text-base font-semibold text-foreground"
                           title={document.filename}
                         >
                           {document.filename}
                         </p>
-                        <p className="mt-0.5 text-sm text-muted">
+                        <p className="mt-1 text-base text-muted">
                           Uploaded {formatDate(document.created_at)}
                         </p>
                       </div>
-                      <div className="flex shrink-0 items-center gap-2.5">
+                      <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-2.5 sm:w-auto sm:justify-end">
                         <StatusBadge document={document} />
                         {isConfirming ? (
                           <div className="flex items-center gap-2">
                             {isDeleting ? (
                               <span
                                 role="status"
-                                className="inline-flex h-7 w-7 items-center justify-center text-red-500"
+                                className="inline-flex h-11 w-11 items-center justify-center text-red-500"
                               >
                                 <SmallSpinner />
                               </span>
@@ -464,14 +473,14 @@ export default function DocumentsPage() {
                                 <button
                                   type="button"
                                   onClick={() => void confirmDelete(document)}
-                                  className="rounded-full bg-red-500 px-3.5 py-1.5 text-xs font-semibold text-white transition hover:bg-red-600 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                  className="min-h-11 rounded-full bg-red-500 px-4 text-sm font-semibold text-white transition hover:bg-red-600 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 >
                                   Confirm
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setConfirmingDeleteId(null)}
-                                  className="rounded-full border border-card-border px-3.5 py-1.5 text-xs font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                                  className="min-h-11 rounded-full border border-card-border px-4 text-sm font-medium text-muted transition hover:bg-active hover:text-foreground active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                                 >
                                   Cancel
                                 </button>
@@ -486,7 +495,7 @@ export default function DocumentsPage() {
                               setDeleteError(null);
                             }}
                             aria-label={`Delete ${document.filename}`}
-                            className="rounded-full border border-card-border px-3.5 py-1.5 text-xs font-medium text-muted transition hover:bg-active hover:text-red-500 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                            className="min-h-11 rounded-full border border-card-border px-4 text-sm font-medium text-muted transition hover:bg-active hover:text-red-500 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                           >
                             Delete
                           </button>
@@ -500,10 +509,10 @@ export default function DocumentsPage() {
                           role="status"
                           className="mt-3 rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2.5"
                         >
-                          <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                          <p className="text-base font-medium text-amber-600 dark:text-amber-400">
                             This upload was interrupted.
                           </p>
-                          <p className="mt-0.5 text-sm text-amber-600 dark:text-amber-400">
+                          <p className="mt-0.5 text-base text-amber-600 dark:text-amber-400">
                             Delete it and upload again.
                           </p>
                         </div>
@@ -511,13 +520,13 @@ export default function DocumentsPage() {
                     {document.status === "failed" &&
                       !isInterruptedUpload(document.error) &&
                       document.error && (
-                        <p className="mt-2 text-sm text-red-600 dark:text-red-400">
+                        <p className="mt-2 text-base text-red-600 dark:text-red-400">
                           {document.error}
                         </p>
                       )}
 
                     {isConfirming && !isDeleting && (
-                      <p className="mt-3 text-sm text-muted">
+                      <p className="mt-3 text-base text-muted">
                         Delete &quot;{document.filename}&quot;? This can&apos;t
                         be undone.
                       </p>
@@ -525,7 +534,7 @@ export default function DocumentsPage() {
                     {deleteError && isConfirming && (
                       <p
                         role="alert"
-                        className="mt-2 text-sm text-red-600 dark:text-red-400"
+                        className="mt-2 text-base text-red-600 dark:text-red-400"
                       >
                         {deleteError}
                       </p>
@@ -534,7 +543,7 @@ export default function DocumentsPage() {
                 );
               })}
             </ul>
-            <p className="mt-4 px-1 text-sm text-muted">
+            <p className="mt-4 px-1 text-base text-muted">
               {plural(documents.length, "document")}
             </p>
           </>

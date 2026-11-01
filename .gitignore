@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 node_modules/
 .next/
+# Local AI tooling (not for the repo)
+.playwright-mcp/
+.mcp.json
+.github/skills/
+/*.png

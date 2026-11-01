@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { ApiError, getPublicConfig } from "@/lib/api";
-import { Field, GlassCard, PrimaryButton, Splash } from "@/components/ui";
+import { Field, PrimaryButton, Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 type Mode = "signin" | "create";
@@ -135,21 +135,78 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="relative flex min-h-screen items-center justify-center bg-background px-4">
-      <ThemeToggle className="absolute right-4 top-4 md:right-6 md:top-6" />
-      <div className="animate-appear w-full max-w-sm">
-        <GlassCard className="p-8">
-          <div className="mb-8 text-center">
-            <p
-              className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-2xl text-white shadow-sm"
+    <main className="relative flex min-h-screen items-center bg-background px-5 py-20 sm:px-8 sm:py-24 lg:px-12 lg:py-16">
+      <div className="absolute left-5 top-5 flex items-center gap-2.5 sm:left-8 sm:top-8 lg:left-12">
+        <span
+          aria-hidden="true"
+          className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-lg text-white"
+        >
+          ✦
+        </span>
+        <span className="text-base font-semibold tracking-tight text-foreground">
+          RAG Chatbot
+        </span>
+      </div>
+      <ThemeToggle className="absolute right-4 top-4 sm:right-6 sm:top-6" />
+      <div className="animate-appear mx-auto grid w-full max-w-6xl gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.82fr)] lg:items-center">
+        <section
+          aria-labelledby="login-welcome"
+          className="hidden rounded-[28px] border border-card-border bg-card p-7 shadow-card sm:block sm:p-9 lg:p-11"
+        >
+          <div className="max-w-xl">
+            <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
+              Your knowledge workspace
+            </p>
+            <h1
+              id="login-welcome"
+              className="mt-4 text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground lg:text-[42px]"
+            >
+              Your documents,
+              <br className="hidden lg:block" /> in conversation.
+            </h1>
+            <p className="mt-4 max-w-lg text-base leading-7 text-muted lg:text-lg lg:leading-8">
+              Bring your own sources into the conversation and find answers
+              grounded in what you’ve collected.
+            </p>
+          </div>
+          <div
+            aria-hidden="true"
+            className="relative mt-8 hidden h-40 items-center justify-center xl:flex"
+          >
+            <div className="absolute h-32 w-40 rotate-[-10deg] rounded-2xl border border-card-border bg-background shadow-card" />
+            <div className="absolute h-32 w-40 rotate-[8deg] rounded-2xl border border-card-border bg-background shadow-card" />
+            <div className="relative flex h-32 w-40 flex-col justify-between rounded-2xl border border-card-border bg-background p-4 shadow-card">
+              <span className="text-accent">✦</span>
+              <span className="space-y-2">
+                <span className="block h-1.5 w-4/5 rounded-full bg-active" />
+                <span className="block h-1.5 w-3/5 rounded-full bg-active" />
+                <span className="block h-1.5 w-2/3 rounded-full bg-active" />
+              </span>
+              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
+                Source material
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <section
+          aria-labelledby="login-heading"
+          className="mx-auto w-full max-w-md rounded-[28px] border border-card-border bg-card p-6 shadow-card sm:p-8 lg:p-9"
+        >
+          <div className="mb-7 text-center sm:mb-8">
+            <span
+              className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-2xl text-white shadow-sm sm:hidden"
               aria-hidden="true"
             >
               ✦
-            </p>
-            <h1 className="text-[26px] font-semibold text-foreground">
+            </span>
+            <h2
+              id="login-heading"
+              className="text-[26px] font-semibold tracking-[-0.03em] text-foreground"
+            >
               {mode === "signin" ? "Welcome back" : "Create your account"}
-            </h1>
-            <p className="mt-1.5 text-[15px] text-muted">
+            </h2>
+            <p className="mt-2 text-base leading-6 text-muted">
               {mode === "signin"
                 ? "Sign in to continue to your workspace."
                 : "A few details and you're in."}
@@ -182,7 +239,7 @@ export default function LoginPage() {
                   role="tab"
                   aria-selected={mode === value}
                   onClick={() => switchMode(value)}
-                  className={`h-9 rounded-lg text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                  className={`min-h-11 rounded-lg px-2 text-sm font-medium transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                     mode === value
                       ? "bg-card text-foreground shadow-sm"
                       : "text-muted hover:text-foreground"
@@ -238,6 +295,7 @@ export default function LoginPage() {
               type="submit"
               loading={submitting}
               disabled={countdown !== null && countdown > 0}
+              className="h-12 text-base font-semibold"
             >
               {countdown !== null && countdown > 0
                 ? `Wait ${countdown}s`
@@ -248,20 +306,20 @@ export default function LoginPage() {
           </form>
 
           {!signupsClosed && (
-            <p className="mt-6 text-center text-sm text-muted">
+            <p className="mt-6 text-center text-base text-muted">
               {mode === "signin" ? "New here? " : "Already have an account? "}
               <button
                 type="button"
                 onClick={() =>
                   switchMode(mode === "signin" ? "create" : "signin")
                 }
-                className="font-medium text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                className="min-h-11 rounded-sm px-1 font-semibold text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
                 {mode === "signin" ? "Create an account" : "Sign in"}
               </button>
             </p>
           )}
-        </GlassCard>
+        </section>
       </div>
     </main>
   );
