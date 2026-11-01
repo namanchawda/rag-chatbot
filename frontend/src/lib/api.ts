@@ -8,12 +8,19 @@ export const TOKEN_STORAGE_KEY = "rag_chatbot_token";
 export class ApiError extends Error {
   readonly status: number;
   readonly retryAfter: number | undefined;
+  readonly code: string | undefined;
 
-  constructor(status: number, message: string, retryAfter?: number) {
+  constructor(
+    status: number,
+    message: string,
+    retryAfter?: number,
+    code?: string,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.retryAfter = retryAfter;
+    this.code = code;
   }
 }
 
@@ -28,6 +35,15 @@ export type AuthResponse = {
   access_token: string;
   token_type: string;
   user: User;
+};
+
+export type SignupResponse = {
+  status: "verification_required";
+  email: string;
+};
+
+export type NeutralEmailResponse = {
+  message: string;
 };
 
 export function getStoredToken(): string | null {
@@ -195,6 +211,10 @@ export async function apiRequest<T>(
           response.status,
           extractErrorMessage(payload, fallback),
           retryAfterSeconds(response),
+          payload && typeof payload === "object" && "code" in payload &&
+            typeof payload.code === "string"
+            ? payload.code
+            : undefined,
         );
       }
 
@@ -212,10 +232,47 @@ export function login(email: string, password: string): Promise<AuthResponse> {
   });
 }
 
-export function signup(email: string, password: string): Promise<AuthResponse> {
-  return apiRequest<AuthResponse>("/auth/signup", {
+export function signup(
+  email: string,
+  password: string,
+): Promise<SignupResponse> {
+  return apiRequest<SignupResponse>("/auth/signup", {
     method: "POST",
     body: { email, password },
+  });
+}
+
+export function verifyEmail(email: string, code: string): Promise<AuthResponse> {
+  return apiRequest<AuthResponse>("/auth/verify-email", {
+    method: "POST",
+    body: { email, code },
+  });
+}
+
+export function resendVerification(
+  email: string,
+): Promise<NeutralEmailResponse> {
+  return apiRequest<NeutralEmailResponse>("/auth/resend-verification", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export function forgotPassword(email: string): Promise<NeutralEmailResponse> {
+  return apiRequest<NeutralEmailResponse>("/auth/forgot-password", {
+    method: "POST",
+    body: { email },
+  });
+}
+
+export function resetPassword(
+  email: string,
+  code: string,
+  newPassword: string,
+): Promise<{ status: "password_reset" }> {
+  return apiRequest<{ status: "password_reset" }>("/auth/reset-password", {
+    method: "POST",
+    body: { email, code, new_password: newPassword },
   });
 }
 

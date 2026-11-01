@@ -37,6 +37,12 @@ type InputProps = InputHTMLAttributes<HTMLInputElement> & {
 };
 
 export function Field({ label, error, id, className, ...rest }: InputProps) {
+  const describedBy = [
+    rest["aria-describedby"],
+    error ? `${id}-error` : undefined,
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className={className}>
       <label
@@ -49,7 +55,7 @@ export function Field({ label, error, id, className, ...rest }: InputProps) {
         id={id}
         {...rest}
         aria-invalid={error ? true : undefined}
-        aria-describedby={error ? `${id}-error` : undefined}
+        aria-describedby={describedBy || undefined}
         className={`h-12 w-full rounded-xl border border-input-border bg-input px-4 text-base text-foreground placeholder:text-muted focus:border-accent focus:outline-none focus:ring-4 focus:ring-ring transition-shadow ${
           error ? "border-red-400" : ""
         }`}

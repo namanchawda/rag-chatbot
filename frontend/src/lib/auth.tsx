@@ -16,6 +16,8 @@ import {
   login as apiLogin,
   signup as apiSignup,
   storeToken,
+  type AuthResponse,
+  type SignupResponse,
   type User,
 } from "@/lib/api";
 
@@ -25,7 +27,8 @@ type AuthContextValue = {
   status: AuthStatus;
   user: User | null;
   signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signUp: (email: string, password: string) => Promise<SignupResponse>;
+  completeSignIn: (response: AuthResponse) => void;
   signOut: () => void;
 };
 
@@ -80,8 +83,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("authenticated");
   }, []);
 
-  const signUp = useCallback(async (email: string, password: string) => {
-    const response = await apiSignup(email, password);
+  const signUp = useCallback(
+    (email: string, password: string) => apiSignup(email, password),
+    [],
+  );
+
+  const completeSignIn = useCallback((response: AuthResponse) => {
     storeToken(response.access_token);
     setUser(response.user);
     setStatus("authenticated");
@@ -94,8 +101,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ status, user, signIn, signUp, signOut }),
-    [status, user, signIn, signUp, signOut],
+    () => ({ status, user, signIn, signUp, completeSignIn, signOut }),
+    [status, user, signIn, signUp, completeSignIn, signOut],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
