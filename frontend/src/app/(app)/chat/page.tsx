@@ -162,51 +162,77 @@ function AssistantMarkdown({ content }: { content: string }) {
 function RerankSwitch({
   checked,
   onChange,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
+  const tooltip = disabled
+    ? "Re-scores retrieved passages for relevance, so sources fit the question better. Locked while an answer is streaming."
+    : "Re-scores retrieved passages for relevance, so sources fit the question better. Slightly slower.";
   return (
-    <label
-      title="Re-scores retrieved passages for relevance, so sources fit the question better. Slightly slower."
-      className="inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-xl px-2 text-sm font-medium text-muted transition hover:text-foreground"
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label="Rerank results"
+      disabled={disabled}
+      title={tooltip}
+      onClick={() => onChange(!checked)}
+      className="inline-flex min-h-11 items-center gap-2.5 rounded-xl px-2 text-sm text-foreground transition hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:text-foreground motion-reduce:transition-none"
     >
-      <input
-        type="checkbox"
-        role="switch"
-        checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-        aria-label="Rerank results"
-        className="peer sr-only"
-      />
+      <span className="font-medium">Rerank</span>
       <span
         aria-hidden="true"
-        className="relative inline-flex h-5 w-9 shrink-0"
+        className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition motion-reduce:transition-none ${
+          checked ? "bg-accent" : "bg-card-border"
+        }`}
       >
-        <span className="absolute inset-0 rounded-full bg-card-border transition peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent" />
-        <span className="absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-4" />
+        <span
+          className={`absolute left-0.5 top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform motion-reduce:transition-none ${
+            checked ? "translate-x-4" : "translate-x-0"
+          }`}
+        />
       </span>
-      Rerank results
-    </label>
+      <span
+        className={`text-xs font-semibold uppercase tracking-[0.08em] ${
+          checked ? "text-accent" : "text-muted"
+        }`}
+      >
+        {checked ? "On" : "Off"}
+      </span>
+    </button>
   );
+}
+
+function rerankTagLabel(
+  message: AssistantMessage,
+): { label: string; fallback: boolean } | null {
+  if (message.state !== "done") return null;
+  if (message.sources.length === 0) return null;
+  if (message.rerankRequested === true) {
+    if (message.reranked === true) return { label: "Reranked", fallback: false };
+    if (message.reranked === false)
+      return {
+        label: "Ranking unavailable, showing closest matches",
+        fallback: true,
+      };
+  } else if (message.rerankRequested === false && message.reranked === false) {
+    return { label: "Closest matches", fallback: false };
+  }
+  return null;
 }
 
 function SourcesDisclosure({
   sources,
-  fallback = false,
 }: {
   sources: ChatSource[];
-  fallback?: boolean;
 }) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="mt-3 border-t border-card-border pt-2.5">
-      {fallback && (
-        <p className="mb-1.5 text-[11px] italic text-amber-600 dark:text-amber-400">
-          Ranking unavailable, showing closest matches
-        </p>
-      )}
+    <div>
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -987,6 +1013,10 @@ function ChatWorkspace() {
                 }
 
                 const isStreaming = message.state === "streaming";
+                const rerankTag =
+                  message.role === "assistant"
+                    ? rerankTagLabel(message)
+                    : null;
                 return (
                   <div
                     key={message.id}
@@ -1020,15 +1050,25 @@ function ChatWorkspace() {
                       </p>
                     )}
 
-                    {!isStreaming && message.sources.length > 0 && (
-                      <SourcesDisclosure
-                        sources={message.sources}
-                        fallback={
-                          message.rerankRequested === true &&
-                          message.reranked === false
-                        }
-                      />
-                    )}
+                    {!isStreaming &&
+                      (message.sources.length > 0 || rerankTag) && (
+                        <div className="mt-3 flex flex-col gap-2.5 border-t border-card-border pt-2.5">
+                          {rerankTag && (
+                            <span
+                              className={`inline-flex w-fit items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
+                                rerankTag.fallback
+                                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                                  : "bg-accent/10 text-accent"
+                              }`}
+                            >
+                              {rerankTag.label}
+                            </span>
+                          )}
+                          {message.sources.length > 0 && (
+                            <SourcesDisclosure sources={message.sources} />
+                          )}
+                        </div>
+                      )}
                   </div>
                 );
               })
@@ -1090,6 +1130,7 @@ function ChatWorkspace() {
                 <RerankSwitch
                   checked={rerankEnabled}
                   onChange={handleRerankChange}
+                  disabled={streamingQuestion !== null}
                 />
               </div>
             )}

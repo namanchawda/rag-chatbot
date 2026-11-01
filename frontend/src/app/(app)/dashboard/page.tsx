@@ -64,24 +64,24 @@ function LibraryIcon() {
 const WORKSPACE_LINKS = [
   {
     href: "/chat",
-    title: "Ask your library",
-    description: "Get answers grounded in the documents you’ve added.",
+    title: "Chat",
+    description: "Ask questions and get answers from your documents.",
     label: "Start a chat",
     icon: <ChatIcon />,
     primary: true,
   },
   {
     href: "/documents",
-    title: "Build your library",
-    description: "Add a PDF or TXT file to give your workspace new sources.",
+    title: "Documents",
+    description: "Upload files and choose how they’re split.",
     label: "View documents",
     icon: <DocumentIcon />,
     primary: false,
   },
   {
     href: "/database",
-    title: "Explore indexed content",
-    description: "See the searchable passages extracted from your files.",
+    title: "Database",
+    description: "Browse the text passages stored from your uploads.",
     label: "Open database",
     icon: <LibraryIcon />,
     primary: false,
@@ -100,27 +100,39 @@ export default function DashboardPage() {
         >
           <div className="relative z-10 max-w-2xl">
             <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
-              Your knowledge workspace
+              Welcome back
             </p>
             <h1
               id="dashboard-heading"
-              className="mt-4 max-w-xl text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground sm:text-[42px]"
+              className="mt-4 max-w-xl text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground sm:text-[40px]"
             >
-              Your documents,
-              <br className="hidden sm:block" /> in conversation.
+              Get answers from your own documents.
             </h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-muted sm:text-lg sm:leading-8">
-              {user?.email ? `Welcome back, ${user.email}. ` : ""}
-              Answers are grounded in your own sources. Add a document or ask
-              your library a question.
+              Upload PDF or text files, then ask questions. Answers come only
+              from your uploads and show the passages they’re based on.
             </p>
-            <Link
-              href="/chat"
-              className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-accent px-6 text-base font-semibold text-white transition hover:bg-accent-hover active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-            >
-              <ChatIcon />
-              Start a chat
-            </Link>
+            {user?.email && (
+              <p className="mt-3 text-sm font-medium text-foreground">
+                Signed in as {user.email}
+              </p>
+            )}
+            <div className="mt-6 flex flex-wrap gap-3">
+              <Link
+                href="/chat"
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full bg-accent px-6 text-base font-semibold text-white transition hover:bg-accent-hover active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                <ChatIcon />
+                Start a chat
+              </Link>
+              <Link
+                href="/documents"
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-card-border bg-card px-6 text-base font-semibold text-foreground transition hover:bg-active active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                <DocumentIcon />
+                Upload a document
+              </Link>
+            </div>
           </div>
           <div
             aria-hidden="true"

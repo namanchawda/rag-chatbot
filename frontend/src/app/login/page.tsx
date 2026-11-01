@@ -18,7 +18,7 @@ import {
   resendVerification,
   verifyEmail,
 } from "@/lib/api";
-import { Field, PrimaryButton, Splash } from "@/components/ui";
+import { Field, PasswordField, PrimaryButton, Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 type Mode = "signin" | "create";
@@ -46,6 +46,63 @@ function secondsLeft(value: number | null): string | null {
     : null;
 }
 
+function UploadStepIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 15V4m0 0L8 8m4-4 4 4" />
+      <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+    </svg>
+  );
+}
+
+function ChatStepIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6a7.5 7.5 0 1 1 17-3.5Z" />
+      <path d="M8 11h8M8 14h5" />
+    </svg>
+  );
+}
+
+function CheckStepIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8.5 12.2 2.4 2.4 4.6-5" />
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const { status, signIn, signUp, completeSignIn } = useAuth();
   const router = useRouter();
@@ -58,6 +115,8 @@ export default function LoginPage() {
   const [confirmation, setConfirmation] = useState("");
   const [code, setCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -129,13 +188,19 @@ export default function LoginPage() {
     setCountdown(null);
   }
 
+  function goToStep(next: Step) {
+    setStep(next);
+    setShowPassword(false);
+    setShowNewPassword(false);
+    setShowConfirmPassword(false);
+  }
+
   function switchMode(next: Mode) {
     setMode(next);
-    setStep("auth");
+    goToStep("auth");
     setPassword("");
     setConfirmation("");
     setCode("");
-    setShowPassword(false);
     clearFeedback();
   }
 
@@ -176,7 +241,7 @@ export default function LoginPage() {
             error.status === 403 &&
             error.code === "email_not_verified"
           ) {
-            setStep("verify");
+            goToStep("verify");
             setCode("");
             setStatusMessage("We’ve sent you a new code.");
             setResendCountdown(RESEND_SECONDS);
@@ -188,7 +253,7 @@ export default function LoginPage() {
         const response = await signUp(email.trim(), password);
         setEmail(response.email);
         setCode("");
-        setStep("verify");
+        goToStep("verify");
         setStatusMessage(null);
         setResendCountdown(RESEND_SECONDS);
       }
@@ -197,6 +262,7 @@ export default function LoginPage() {
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
+      setShowPassword(false);
     }
   }
 
@@ -269,11 +335,10 @@ export default function LoginPage() {
     setSubmitting(true);
     try {
       await forgotPassword(email.trim());
-      setStep("forgot-reset");
+      goToStep("forgot-reset");
       setCode("");
       setPassword("");
       setConfirmation("");
-      setShowPassword(false);
       setResendCountdown(RESEND_SECONDS);
       setStatusMessage(
         "If an account exists for that email, we’ve sent a code.",
@@ -311,13 +376,14 @@ export default function LoginPage() {
       setPassword("");
       setConfirmation("");
       setCode("");
-      setStep("forgot-done");
-      setStatusMessage("Password updated");
-    } catch (error) {
+      goToStep("forgot-done");
+      setStatusMessage("Password updated");    } catch (error) {
       handleRequestError(error);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
+      setShowNewPassword(false);
+      setShowConfirmPassword(false);
     }
   }
 
@@ -325,7 +391,7 @@ export default function LoginPage() {
     setCode("");
     setPassword("");
     setConfirmation("");
-    setStep("forgot-email");
+    goToStep("forgot-email");
     setResendCountdown(null);
     clearFeedback();
   }
@@ -343,7 +409,7 @@ export default function LoginPage() {
     confirmation.length > 0 && password !== confirmation;
 
   return (
-    <main className="relative flex min-h-screen items-center bg-background px-5 py-20 sm:px-8 sm:py-24 lg:px-12 lg:py-16">
+    <main className="relative flex min-h-screen items-center bg-background px-5 py-14 sm:px-8 sm:py-20 lg:px-12 lg:py-12">
       <div className="absolute left-5 top-5 flex items-center gap-2.5 sm:left-8 sm:top-8 lg:left-12">
         <span
           aria-hidden="true"
@@ -363,37 +429,69 @@ export default function LoginPage() {
         >
           <div className="max-w-xl">
             <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
-              Your knowledge workspace
+              Ask your documents
             </p>
             <h1
               id="login-welcome"
-              className="mt-4 text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground lg:text-[42px]"
+              className="mt-4 text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground lg:text-[40px]"
             >
-              Your documents,
-              <br className="hidden lg:block" /> in conversation.
+              Get answers from your own documents.
             </h1>
             <p className="mt-4 max-w-lg text-base leading-7 text-muted lg:text-lg lg:leading-8">
-              Bring your own sources into the conversation and find answers
-              grounded in what you’ve collected.
+              Upload PDF or text files, then ask questions in plain language.
+              Answers come only from what you uploaded, and each one shows the
+              passages it’s based on, so you can check it.
             </p>
-          </div>
-          <div
-            aria-hidden="true"
-            className="relative mt-8 hidden h-40 items-center justify-center xl:flex"
-          >
-            <div className="absolute h-32 w-40 rotate-[-10deg] rounded-2xl border border-card-border bg-background shadow-card" />
-            <div className="absolute h-32 w-40 rotate-[8deg] rounded-2xl border border-card-border bg-background shadow-card" />
-            <div className="relative flex h-32 w-40 flex-col justify-between rounded-2xl border border-card-border bg-background p-4 shadow-card">
-              <span className="text-accent">✦</span>
-              <span className="space-y-2">
-                <span className="block h-1.5 w-4/5 rounded-full bg-active" />
-                <span className="block h-1.5 w-3/5 rounded-full bg-active" />
-                <span className="block h-1.5 w-2/3 rounded-full bg-active" />
-              </span>
-              <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted">
-                Source material
-              </span>
-            </div>
+            <ol className="mt-8 max-w-lg space-y-4">
+              <li className="flex items-start gap-3.5">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-full bg-active text-accent"
+                >
+                  <UploadStepIcon />
+                </span>
+                <span>
+                  <span className="block text-[15px] font-semibold text-foreground">
+                    Upload
+                  </span>
+                  <span className="mt-0.5 block text-sm leading-6 text-muted">
+                    Add PDF or TXT files and choose how they’re split.
+                  </span>
+                </span>
+              </li>
+              <li className="flex items-start gap-3.5">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-full bg-active text-accent"
+                >
+                  <ChatStepIcon />
+                </span>
+                <span>
+                  <span className="block text-[15px] font-semibold text-foreground">
+                    Ask
+                  </span>
+                  <span className="mt-0.5 block text-sm leading-6 text-muted">
+                    Question your library in plain language.
+                  </span>
+                </span>
+              </li>
+              <li className="flex items-start gap-3.5">
+                <span
+                  aria-hidden="true"
+                  className="mt-0.5 flex h-9 w-9 flex-none items-center justify-center rounded-full bg-active text-accent"
+                >
+                  <CheckStepIcon />
+                </span>
+                <span>
+                  <span className="block text-[15px] font-semibold text-foreground">
+                    Check
+                  </span>
+                  <span className="mt-0.5 block text-sm leading-6 text-muted">
+                    See the exact passages behind every answer.
+                  </span>
+                </span>
+              </li>
+            </ol>
           </div>
         </section>
 
@@ -492,16 +590,17 @@ export default function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
               />
-              <Field
+              <PasswordField
                 id="password"
                 label="Password"
-                type="password"
                 autoComplete={
                   mode === "signin" ? "current-password" : "new-password"
                 }
                 placeholder="••••••••"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
+                show={showPassword}
+                onToggleShow={setShowPassword}
               />
               {mode === "signin" && (
                 <div className="-mt-2 text-right">
@@ -509,7 +608,7 @@ export default function LoginPage() {
                     type="button"
                     onClick={() => {
                       clearFeedback();
-                      setStep("forgot-email");
+                      goToStep("forgot-email");
                     }}
                     className="min-h-11 rounded-sm px-1 text-sm font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                   >
@@ -658,7 +757,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => {
-                  setStep("auth");
+                  goToStep("auth");
                   setMode("signin");
                   clearFeedback();
                 }}
@@ -688,14 +787,15 @@ export default function LoginPage() {
                 onChange={handleCodeChange}
               />
               <div>
-                <Field
+                <PasswordField
                   id="new-password"
                   label="New password"
-                  type={showPassword ? "text" : "password"}
                   autoComplete="new-password"
                   placeholder="At least 8 characters"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
+                  show={showNewPassword}
+                  onToggleShow={setShowNewPassword}
                 />
                 <p
                   aria-live="polite"
@@ -708,14 +808,15 @@ export default function LoginPage() {
                     : "Use at least 8 characters."}
                 </p>
               </div>
-              <Field
+              <PasswordField
                 id="confirm-password"
                 label="Confirm new password"
-                type={showPassword ? "text" : "password"}
                 autoComplete="new-password"
                 placeholder="Enter your new password again"
                 value={confirmation}
                 onChange={(event) => setConfirmation(event.target.value)}
+                show={showConfirmPassword}
+                onToggleShow={setShowConfirmPassword}
               />
               <p
                 aria-live="polite"
@@ -733,14 +834,6 @@ export default function LoginPage() {
                     ? "Passwords don’t match."
                     : "Enter your password again to confirm."}
               </p>
-              <button
-                type="button"
-                aria-pressed={showPassword}
-                onClick={() => setShowPassword((value) => !value)}
-                className="min-h-11 rounded-sm px-1 text-sm font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-              >
-                {showPassword ? "Hide passwords" : "Show passwords"}
-              </button>
               {statusMessage && (
                 <p role="status" aria-live="polite" className="text-sm text-muted">
                   {statusMessage}
@@ -803,7 +896,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => {
                   setMode("signin");
-                  setStep("auth");
+                  goToStep("auth");
                   setPassword("");
                   setConfirmation("");
                   setCode("");
