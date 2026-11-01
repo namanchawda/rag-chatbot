@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ApiError,
@@ -12,13 +12,164 @@ import {
   type DocumentItem,
 } from "@/lib/api";
 import {
+  documentChunkingLabel,
   dropZoneLabel,
+  hasStoredChunkingSettings,
   limitLabelFor,
   maxBytesFor,
   useUploadConfig,
+  type ChunkingConfig,
+  type ChunkingStrategyConfig,
 } from "@/lib/upload-config";
 
 const POLL_INTERVAL_MS = 2500;
+const CHUNKING_STORAGE_KEY = "rag_chatbot_chunking";
+
+type ChunkingSelection = {
+  strategy: string;
+  chunkSize: string;
+  chunkOverlap: string;
+};
+
+type ResolvedChunkingSelection = {
+  chunking_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+};
+
+function defaultChunkingSelection(
+  config: ChunkingConfig,
+): ChunkingSelection {
+  return {
+    strategy: config.defaultStrategy,
+    chunkSize: String(config.chunkSizeDefault),
+    chunkOverlap: String(config.chunkOverlapDefault),
+  };
+}
+
+function resolveChunkingSelection(
+  config: ChunkingConfig,
+  selection: ChunkingSelection,
+): ResolvedChunkingSelection | null {
+  const chunkSize = Number(selection.chunkSize);
+  const chunkOverlap = Number(selection.chunkOverlap);
+  if (
+    !config.strategies.some((strategy) => strategy.key === selection.strategy) ||
+    selection.chunkSize.trim().length === 0 ||
+    !Number.isInteger(chunkSize) ||
+    chunkSize < config.chunkSizeMin ||
+    chunkSize > config.chunkSizeMax ||
+    selection.chunkOverlap.trim().length === 0 ||
+    !Number.isInteger(chunkOverlap) ||
+    chunkOverlap < 0 ||
+    chunkOverlap > config.chunkOverlapMax ||
+    chunkOverlap * 2 >= chunkSize
+  ) {
+    return null;
+  }
+  return {
+    chunking_strategy: selection.strategy,
+    chunk_size: chunkSize,
+    chunk_overlap: chunkOverlap,
+  };
+}
+
+function readStoredChunkingSelection(): ChunkingSelection | null {
+  try {
+    const raw = window.localStorage.getItem(CHUNKING_STORAGE_KEY);
+    if (!raw) return null;
+    const stored: unknown = JSON.parse(raw);
+    if (
+      typeof stored !== "object" ||
+      stored === null ||
+      !("strategy" in stored) ||
+      !("chunkSize" in stored) ||
+      !("chunkOverlap" in stored) ||
+      typeof stored.strategy !== "string" ||
+      typeof stored.chunkSize !== "string" ||
+      typeof stored.chunkOverlap !== "string"
+    ) {
+      return null;
+    }
+    const selection = {
+      strategy: stored.strategy,
+      chunkSize: stored.chunkSize,
+      chunkOverlap: stored.chunkOverlap,
+    };
+    return selection;
+  } catch {
+    return null;
+  }
+}
+
+function ChunkingStrategyCards({
+  strategies,
+  selected,
+  onChange,
+}: {
+  strategies: ChunkingStrategyConfig[];
+  selected: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="text-base font-semibold text-foreground">
+        Chunking strategy
+      </legend>
+      <p id="chunking-strategy-help" className="mt-1 text-sm leading-6 text-muted">
+        Controls how your document is split into passages for search. You
+        can&apos;t change it later without re-uploading.
+      </p>
+      <div
+        role="radiogroup"
+        aria-describedby="chunking-strategy-help"
+        className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+      >
+        {strategies.map((strategy) => {
+          const isSelected = selected === strategy.key;
+          return (
+            <label key={strategy.key} className="cursor-pointer">
+              <input
+                type="radio"
+                name="chunking-strategy"
+                value={strategy.key}
+                checked={isSelected}
+                onChange={() => onChange(strategy.key)}
+                className="peer sr-only"
+              />
+              <span
+                className={`flex min-h-24 flex-col rounded-2xl border p-4 transition focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2 ${
+                  isSelected
+                    ? "border-accent bg-accent/[0.08] shadow-sm"
+                    : "border-card-border bg-background hover:border-accent/40 hover:bg-active"
+                }`}
+              >
+                <span className="flex items-center justify-between gap-3">
+                  <span className="text-base font-semibold text-foreground">
+                    {strategy.label}
+                  </span>
+                  <span
+                    aria-hidden="true"
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                      isSelected
+                        ? "border-accent bg-accent text-xs text-white"
+                        : "border-input-border"
+                    }`}
+                  >
+                    {isSelected ? "✓" : null}
+                  </span>
+                </span>
+                <span className="mt-1 text-sm leading-5 text-muted">
+                  {strategy.description}
+                </span>
+              </span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
 
 function normalizeExtension(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -90,6 +241,29 @@ function StatusBadge({ document }: { document: DocumentItem }) {
   );
 }
 
+function ChunkingBadge({
+  document,
+  strategies,
+}: {
+  document: DocumentItem;
+  strategies?: ChunkingStrategyConfig[];
+}) {
+  const hasSettings = hasStoredChunkingSettings(document);
+  const label = documentChunkingLabel(document, strategies);
+  return (
+    <span
+      className="inline-flex min-h-7 items-center rounded-full border border-card-border bg-active px-2.5 py-1 text-xs font-medium text-muted"
+      title={
+        hasSettings
+          ? `${label} · size ${document.chunk_size} · overlap ${document.chunk_overlap}`
+          : undefined
+      }
+    >
+      {label}
+    </span>
+  );
+}
+
 function SmallSpinner() {
   return (
     <span
@@ -116,6 +290,63 @@ export default function DocumentsPage() {
   );
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [chunkingSelection, setChunkingSelection] =
+    useState<ChunkingSelection | null>(readStoredChunkingSelection);
+  const [chunkingEdited, setChunkingEdited] = useState(false);
+
+  const chunkingConfig = uploadConfig.chunking;
+  const storedSelectionIsValid =
+    chunkingConfig !== null &&
+    chunkingSelection !== null &&
+    resolveChunkingSelection(chunkingConfig, chunkingSelection) !== null;
+  const defaultSelection = useMemo(
+    () => (chunkingConfig ? defaultChunkingSelection(chunkingConfig) : null),
+    [chunkingConfig],
+  );
+  const effectiveChunkingSelection = chunkingConfig
+    ? chunkingSelection &&
+      (chunkingEdited || storedSelectionIsValid)
+      ? chunkingSelection
+      : defaultSelection
+    : null;
+  const resolvedChunkingSelection =
+    chunkingConfig && effectiveChunkingSelection
+      ? resolveChunkingSelection(chunkingConfig, effectiveChunkingSelection)
+      : null;
+  const chunkingValid =
+    chunkingConfig === null || resolvedChunkingSelection !== null;
+
+  useEffect(() => {
+    if (
+      !chunkingConfig ||
+      !effectiveChunkingSelection ||
+      !resolveChunkingSelection(chunkingConfig, effectiveChunkingSelection)
+    ) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        CHUNKING_STORAGE_KEY,
+        JSON.stringify(effectiveChunkingSelection),
+      );
+    } catch {
+      // Remembering the choice is best-effort only.
+    }
+  }, [
+    chunkingConfig,
+    effectiveChunkingSelection,
+  ]);
+
+  function updateChunkingSelection(update: Partial<ChunkingSelection>) {
+    if (!chunkingConfig || !effectiveChunkingSelection) return;
+    setChunkingEdited(true);
+    setChunkingSelection((current) => ({
+      ...(current && (chunkingEdited || storedSelectionIsValid)
+        ? current
+        : effectiveChunkingSelection),
+      ...update,
+    }));
+  }
 
   const loadDocuments = useCallback(async () => {
     const token = getStoredToken();
@@ -163,14 +394,27 @@ export default function DocumentsPage() {
   }, [hasProcessing, loadDocuments]);
 
   function openFilePicker() {
-    if (isUploading) return;
+    if (isUploading || !chunkingValid) return;
     inputRef.current?.click();
   }
 
   const handleFiles = useCallback(
     async (fileList: FileList | File[]) => {
+      const selectedChunking =
+        chunkingConfig && effectiveChunkingSelection
+          ? resolveChunkingSelection(
+              chunkingConfig,
+              effectiveChunkingSelection,
+            )
+          : null;
       const files = Array.from(fileList);
-      if (files.length === 0 || isUploading) return;
+      if (
+        files.length === 0 ||
+        isUploading ||
+        (chunkingConfig !== null && selectedChunking === null)
+      ) {
+        return;
+      }
 
       let currentFile = "";
       const rejected: string[] = [];
@@ -211,7 +455,7 @@ export default function DocumentsPage() {
       try {
         for (const file of accepted) {
           currentFile = file.name;
-          await uploadDocument(token, file);
+          await uploadDocument(token, file, selectedChunking ?? undefined);
         }
         setLiveMessage(`Uploaded ${plural(accepted.length, "file")}.`);
       } catch (error) {
@@ -226,6 +470,9 @@ export default function DocumentsPage() {
           // the batch stops here.
           setUploadError(error.message);
           setLiveMessage(null);
+        } else if (error instanceof ApiError && error.status === 422) {
+          setUploadError(error.message);
+          setLiveMessage(null);
         } else {
           const detail =
             error instanceof ApiError
@@ -238,7 +485,14 @@ export default function DocumentsPage() {
         await loadDocuments();
       }
     },
-    [isUploading, loadDocuments, router, uploadConfig],
+    [
+      chunkingConfig,
+      effectiveChunkingSelection,
+      isUploading,
+      loadDocuments,
+      router,
+      uploadConfig,
+    ],
   );
 
   async function confirmDelete(document: DocumentItem) {
@@ -272,6 +526,27 @@ export default function DocumentsPage() {
       setDeletingId(null);
     }
   }
+
+  const chunkSizeValue = Number(effectiveChunkingSelection?.chunkSize);
+  const chunkOverlapValue = Number(effectiveChunkingSelection?.chunkOverlap);
+  const chunkSizeIsValid =
+    chunkingConfig !== null &&
+    (effectiveChunkingSelection?.chunkSize.trim().length ?? 0) > 0 &&
+    Number.isInteger(chunkSizeValue) &&
+    chunkSizeValue >= chunkingConfig.chunkSizeMin &&
+    chunkSizeValue <= chunkingConfig.chunkSizeMax;
+  const chunkingValidationMessage =
+    chunkingConfig && effectiveChunkingSelection
+      ? !chunkSizeIsValid
+        ? `Chunk size must be an integer between ${chunkingConfig.chunkSizeMin} and ${chunkingConfig.chunkSizeMax}.`
+        : effectiveChunkingSelection.chunkOverlap.trim().length === 0 ||
+            !Number.isInteger(chunkOverlapValue) ||
+            chunkOverlapValue < 0 ||
+            chunkOverlapValue > chunkingConfig.chunkOverlapMax ||
+            chunkOverlapValue * 2 >= chunkSizeValue
+          ? `Overlap must be at least 0, no more than ${chunkingConfig.chunkOverlapMax}, and less than half of the chunk size.`
+          : null
+      : null;
 
   return (
     <main className="flex-1 px-5 py-8 sm:px-8 sm:py-12 lg:px-12 lg:py-14">
@@ -308,9 +583,112 @@ export default function DocumentsPage() {
         )}
 
         <div className="animate-appear mt-7 rounded-[28px] border border-card-border bg-card p-4 shadow-card sm:p-6">
+          {chunkingConfig && effectiveChunkingSelection && (
+            <section
+              aria-label="Upload chunking settings"
+              className="mb-5 rounded-2xl border border-card-border bg-background/70 p-4 sm:p-5"
+            >
+              <ChunkingStrategyCards
+                strategies={chunkingConfig.strategies}
+                selected={effectiveChunkingSelection.strategy}
+                onChange={(strategy) => updateChunkingSelection({ strategy })}
+              />
+              <details className="mt-4 rounded-xl border border-card-border bg-card px-4">
+                <summary className="flex min-h-11 cursor-pointer items-center text-base font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+                  Advanced
+                </summary>
+                <div className="grid gap-4 pb-4 sm:grid-cols-2">
+                  <label
+                    htmlFor="chunk-size"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Chunk size (characters)
+                    <input
+                      id="chunk-size"
+                      type="number"
+                      inputMode="numeric"
+                      min={chunkingConfig.chunkSizeMin}
+                      max={chunkingConfig.chunkSizeMax}
+                      step={1}
+                      value={effectiveChunkingSelection.chunkSize}
+                      aria-invalid={!chunkSizeIsValid}
+                      aria-describedby={
+                        !chunkSizeIsValid ? "chunking-validation" : undefined
+                      }
+                      onChange={(event) =>
+                        updateChunkingSelection({
+                          chunkSize: event.target.value,
+                        })
+                      }
+                      className="mt-1.5 h-11 w-full rounded-xl border border-input-border bg-input px-3 text-base text-foreground outline-none focus:border-accent focus:ring-4 focus:ring-ring"
+                    />
+                    <span className="mt-1 block text-xs font-normal text-muted">
+                      {chunkingConfig.chunkSizeMin}–{chunkingConfig.chunkSizeMax}
+                    </span>
+                  </label>
+                  <label
+                    htmlFor="chunk-overlap"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Overlap (characters)
+                    <input
+                      id="chunk-overlap"
+                      type="number"
+                      inputMode="numeric"
+                      min={0}
+                      max={chunkingConfig.chunkOverlapMax}
+                      step={1}
+                      value={effectiveChunkingSelection.chunkOverlap}
+                      aria-invalid={Boolean(chunkingValidationMessage)}
+                      aria-describedby={
+                        chunkingValidationMessage
+                          ? "chunking-validation"
+                          : undefined
+                      }
+                      onChange={(event) =>
+                        updateChunkingSelection({
+                          chunkOverlap: event.target.value,
+                        })
+                      }
+                      className="mt-1.5 h-11 w-full rounded-xl border border-input-border bg-input px-3 text-base text-foreground outline-none focus:border-accent focus:ring-4 focus:ring-ring"
+                    />
+                    <span className="mt-1 block text-xs font-normal text-muted">
+                      0–{chunkingConfig.chunkOverlapMax}
+                    </span>
+                  </label>
+                </div>
+              </details>
+              <p
+                aria-live="polite"
+                className="mt-4 text-sm leading-6 text-muted"
+              >
+                Next uploads will use:{" "}
+                <span className="font-semibold text-foreground">
+                  {chunkingConfig.strategies.find(
+                    (strategy) =>
+                      strategy.key === effectiveChunkingSelection.strategy,
+                  )?.label ?? "Recursive"}
+                  {" · "}
+                  size {effectiveChunkingSelection.chunkSize}
+                  {" · "}
+                  overlap {effectiveChunkingSelection.chunkOverlap}
+                </span>
+              </p>
+              {chunkingValidationMessage && (
+                <p
+                  id="chunking-validation"
+                  role="alert"
+                  className="mt-2 text-sm text-red-600 dark:text-red-400"
+                >
+                  {chunkingValidationMessage}
+                </p>
+              )}
+            </section>
+          )}
           <div
             role="button"
-            tabIndex={0}
+            tabIndex={isUploading || !chunkingValid ? -1 : 0}
+            aria-disabled={isUploading || !chunkingValid}
             aria-label="Upload documents. Drag and drop or browse files."
             onClick={openFilePicker}
             onKeyDown={(event) => {
@@ -321,7 +699,7 @@ export default function DocumentsPage() {
             }}
             onDragOver={(event) => {
               event.preventDefault();
-              if (!isUploading) setDragOver(true);
+              if (!isUploading && chunkingValid) setDragOver(true);
             }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(event) => {
@@ -329,11 +707,11 @@ export default function DocumentsPage() {
               setDragOver(false);
               void handleFiles(event.dataTransfer.files);
             }}
-            className={`flex min-h-64 w-full cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-9 text-center transition sm:min-h-72 sm:px-8 sm:py-12 ${
+            className={`flex min-h-64 w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-5 py-9 text-center transition sm:min-h-72 sm:px-8 sm:py-12 ${
               dragOver
                 ? "scale-[1.01] border-accent bg-accent/10"
-                : "border-card-border bg-background/60 hover:border-accent/50 hover:bg-active"
-            } ${isUploading ? "opacity-60" : ""}`}
+                : "cursor-pointer border-card-border bg-background/60 hover:border-accent/50 hover:bg-active"
+            } ${isUploading || !chunkingValid ? "cursor-not-allowed opacity-60" : ""}`}
           >
             <span
               aria-hidden="true"
@@ -353,7 +731,7 @@ export default function DocumentsPage() {
                 event.stopPropagation();
                 openFilePicker();
               }}
-              disabled={isUploading}
+              disabled={isUploading || !chunkingValid}
               className="mt-3 inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-accent px-5 text-base font-medium text-white shadow-sm transition hover:bg-accent-hover active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isUploading && <SmallSpinner />}
@@ -453,9 +831,15 @@ export default function DocumentsPage() {
                         >
                           {document.filename}
                         </p>
-                        <p className="mt-1 text-base text-muted">
-                          Uploaded {formatDate(document.created_at)}
-                        </p>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <p className="text-base text-muted">
+                            Uploaded {formatDate(document.created_at)}
+                          </p>
+                          <ChunkingBadge
+                            document={document}
+                            strategies={chunkingConfig?.strategies}
+                          />
+                        </div>
                       </div>
                       <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-2.5 sm:w-auto sm:justify-end">
                         <StatusBadge document={document} />

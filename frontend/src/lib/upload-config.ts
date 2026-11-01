@@ -8,6 +8,22 @@ export const FALLBACK_EXTENSIONS = [".pdf", ".txt"];
 export const FALLBACK_MAX_PDF_MB = 25;
 export const FALLBACK_MAX_TEXT_MB = 2;
 
+export type ChunkingStrategyConfig = {
+  key: string;
+  label: string;
+  description: string;
+};
+
+export type ChunkingConfig = {
+  strategies: ChunkingStrategyConfig[];
+  defaultStrategy: string;
+  chunkSizeDefault: number;
+  chunkSizeMin: number;
+  chunkSizeMax: number;
+  chunkOverlapDefault: number;
+  chunkOverlapMax: number;
+};
+
 const MIME_BY_EXTENSION: Record<string, string> = {
   ".pdf": "application/pdf",
   ".txt": "text/plain",
@@ -24,6 +40,7 @@ export type UploadConfig = {
   pdfLimitLabel: string;
   textLimitLabel: string;
   allowedTypesLabel: string;
+  chunking: ChunkingConfig | null;
 };
 
 function positiveMb(value: unknown, fallback: number): number {
@@ -64,12 +81,91 @@ function normalizeExtensions(allowed: unknown): string[] {
   return extensions.length > 0 ? extensions : [...FALLBACK_EXTENSIONS];
 }
 
+function validInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value);
+}
+
+function buildChunkingConfig(config: {
+  chunking_strategies?: unknown;
+  default_chunking_strategy?: unknown;
+  chunk_size_default?: unknown;
+  chunk_size_min?: unknown;
+  chunk_size_max?: unknown;
+  chunk_overlap_default?: unknown;
+  chunk_overlap_max?: unknown;
+}): ChunkingConfig | null {
+  const strategies = config.chunking_strategies;
+  const defaultStrategy = config.default_chunking_strategy;
+  const chunkSizeDefault = config.chunk_size_default;
+  const chunkSizeMin = config.chunk_size_min;
+  const chunkSizeMax = config.chunk_size_max;
+  const chunkOverlapDefault = config.chunk_overlap_default;
+  const chunkOverlapMax = config.chunk_overlap_max;
+
+  if (
+    !Array.isArray(strategies) ||
+    strategies.length === 0 ||
+    !strategies.every(
+      (strategy: unknown) =>
+        typeof strategy === "object" &&
+        strategy !== null &&
+        "key" in strategy &&
+        "label" in strategy &&
+        "description" in strategy &&
+        typeof strategy.key === "string" &&
+        strategy.key.length > 0 &&
+        typeof strategy.label === "string" &&
+        typeof strategy.description === "string",
+    ) ||
+    typeof defaultStrategy !== "string" ||
+    !strategies.some(
+      (strategy) =>
+        typeof strategy === "object" &&
+        strategy !== null &&
+        "key" in strategy &&
+        strategy.key === defaultStrategy,
+    ) ||
+    !validInteger(chunkSizeDefault) ||
+    !validInteger(chunkSizeMin) ||
+    !validInteger(chunkSizeMax) ||
+    !validInteger(chunkOverlapDefault) ||
+    !validInteger(chunkOverlapMax) ||
+    chunkSizeMin < 1 ||
+    chunkSizeMin > chunkSizeDefault ||
+    chunkSizeDefault > chunkSizeMax ||
+    chunkOverlapMax < 0 ||
+    chunkOverlapDefault < 0 ||
+    chunkOverlapDefault > chunkOverlapMax ||
+    chunkOverlapDefault * 2 >= chunkSizeDefault
+  ) {
+    return null;
+  }
+
+  return {
+    strategies,
+    defaultStrategy,
+    chunkSizeDefault,
+    chunkSizeMin,
+    chunkSizeMax,
+    chunkOverlapDefault,
+    chunkOverlapMax,
+  };
+}
+
 export function buildUploadConfig(server: unknown): UploadConfig {
   const config = (server ?? {}) as {
     allowed_extensions?: string[];
     max_upload_mb?: number;
     max_text_upload_mb?: number;
+    chunking_strategies?: unknown;
+    default_chunking_strategy?: unknown;
+    chunk_size_default?: unknown;
+    chunk_size_min?: unknown;
+    chunk_size_max?: unknown;
+    chunk_overlap_default?: unknown;
+    chunk_overlap_max?: unknown;
   };
+  const chunking = buildChunkingConfig(config);
   const extensions = normalizeExtensions(config.allowed_extensions);
   const maxPdfMb = positiveMb(config.max_upload_mb, FALLBACK_MAX_PDF_MB);
   // Older backends do not send a separate text limit; the fallback applies.
@@ -82,6 +178,7 @@ export function buildUploadConfig(server: unknown): UploadConfig {
     pdfLimitLabel: `${maxPdfMb} MB`,
     textLimitLabel: `${maxTextMb} MB`,
     allowedTypesLabel: allowedTypesLabel(extensions),
+    chunking,
   };
 }
 
@@ -105,6 +202,52 @@ export function useUploadConfig(): UploadConfig {
   }, []);
 
   return config;
+}
+
+export function chunkingStrategyLabel(
+  strategy: string | null | undefined,
+  strategies?: ChunkingStrategyConfig[],
+): string {
+  if (!strategy) return "Recursive";
+  const configured = strategies?.find((item) => item.key === strategy);
+  if (configured) return configured.label;
+  return strategy
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+export function hasStoredChunkingSettings(document: {
+  chunking_strategy?: string | null;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
+}): document is {
+  chunking_strategy: string;
+  chunk_size: number;
+  chunk_overlap: number;
+} {
+  return (
+    typeof document.chunking_strategy === "string" &&
+    document.chunking_strategy.length > 0 &&
+    typeof document.chunk_size === "number" &&
+    Number.isFinite(document.chunk_size) &&
+    typeof document.chunk_overlap === "number" &&
+    Number.isFinite(document.chunk_overlap)
+  );
+}
+
+export function documentChunkingLabel(
+  document: {
+    chunking_strategy?: string | null;
+    chunk_size?: number | null;
+    chunk_overlap?: number | null;
+  } | null | undefined,
+  strategies?: ChunkingStrategyConfig[],
+): string {
+  return document && hasStoredChunkingSettings(document)
+    ? chunkingStrategyLabel(document.chunking_strategy, strategies)
+    : "Recursive";
 }
 
 // Per-type byte limit: PDFs and text files each have their own cap.

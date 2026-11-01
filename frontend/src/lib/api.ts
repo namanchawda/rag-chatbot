@@ -93,6 +93,9 @@ export type DocumentItem = {
   chunk_count: number;
   error: string | null;
   created_at: string;
+  chunking_strategy?: string | null;
+  chunk_size?: number | null;
+  chunk_overlap?: number | null;
 };
 
 // A sleeping host may take up to a minute to answer, so there is NO
@@ -227,9 +230,19 @@ export function listDocuments(token: string): Promise<DocumentItem[]> {
 export function uploadDocument(
   token: string,
   file: File,
+  chunking?: {
+    chunking_strategy: string;
+    chunk_size: number;
+    chunk_overlap: number;
+  },
 ): Promise<DocumentItem> {
   const formData = new FormData();
   formData.append("file", file);
+  if (chunking) {
+    formData.append("chunking_strategy", chunking.chunking_strategy);
+    formData.append("chunk_size", String(chunking.chunk_size));
+    formData.append("chunk_overlap", String(chunking.chunk_overlap));
+  }
   return apiRequest<DocumentItem>("/documents", {
     method: "POST",
     body: formData,
@@ -322,6 +335,17 @@ export type PublicConfig = {
   allowed_extensions?: string[];
   rerank_available?: boolean;
   rerank_default?: boolean;
+  chunking_strategies?: {
+    key: string;
+    label: string;
+    description: string;
+  }[];
+  default_chunking_strategy?: string;
+  chunk_size_default?: number;
+  chunk_size_min?: number;
+  chunk_size_max?: number;
+  chunk_overlap_default?: number;
+  chunk_overlap_max?: number;
 };
 
 // No auth: this endpoint exists precisely so the login page can ask it.

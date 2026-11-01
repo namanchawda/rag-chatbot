@@ -21,6 +21,7 @@ import {
   type ChunkStats,
   type DocumentItem,
 } from "@/lib/api";
+import { documentChunkingLabel } from "@/lib/upload-config";
 
 const PAGE_SIZE = 20;
 const PREVIEW_CHARS = 300;
@@ -335,7 +336,7 @@ export default function DatabasePage() {
               <option value="">All documents</option>
               {readyDocuments?.map((document) => (
                 <option key={document.id} value={document.id}>
-                  {document.filename}
+                  {document.filename} · {documentChunkingLabel(document)}
                 </option>
               ))}
             </select>
@@ -462,6 +463,11 @@ export default function DatabasePage() {
                 <tbody>
                   {items.map((chunk) => {
                     const isExpanded = expandedIds.has(chunk.id);
+                    const sourceDocument = documents?.find(
+                      (document) => document.id === chunk.document_id,
+                    );
+                    const sourceStrategy =
+                      documentChunkingLabel(sourceDocument);
                     const displayText =
                       chunk.text.length > PREVIEW_CHARS && !isExpanded
                         ? `${chunk.text.slice(0, PREVIEW_CHARS)}…`
@@ -477,6 +483,9 @@ export default function DatabasePage() {
                             title={chunk.source}
                           >
                             📄 {chunk.source}
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            {sourceStrategy} strategy
                           </p>
                         </td>
                         <td className="px-2 py-3 text-right text-[13px] text-muted">
@@ -520,6 +529,10 @@ export default function DatabasePage() {
             <ul className="mt-3 space-y-3 lg:hidden">
               {items.map((chunk, index) => {
                 const isExpanded = expandedIds.has(chunk.id);
+                const sourceDocument = documents?.find(
+                  (document) => document.id === chunk.document_id,
+                );
+                const sourceStrategy = documentChunkingLabel(sourceDocument);
                 const displayText =
                   chunk.text.length > PREVIEW_CHARS && !isExpanded
                     ? `${chunk.text.slice(0, PREVIEW_CHARS)}…`
@@ -530,13 +543,18 @@ export default function DatabasePage() {
                     className="animate-appear rounded-[20px] border border-card-border bg-card p-4 shadow-card backdrop-blur-2xl"
                     style={{ animationDelay: `${Math.min(index * 40, 200)}ms` }}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <p
-                        className="truncate text-base font-semibold text-foreground"
-                        title={chunk.source}
-                      >
-                        📄 {chunk.source}
-                      </p>
+                    <div className="flex min-w-0 items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p
+                          className="truncate text-base font-semibold text-foreground"
+                          title={chunk.source}
+                        >
+                          📄 {chunk.source}
+                        </p>
+                        <p className="mt-1 text-sm text-muted">
+                          {sourceStrategy} strategy
+                        </p>
+                      </div>
                       <p className="shrink-0 text-base text-muted">
                         #{chunk.chunk_index} · {formatNumber(chunk.char_count)}{" "}
                         chars
