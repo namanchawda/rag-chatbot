@@ -106,7 +106,7 @@ export default function DashboardPage() {
               id="dashboard-heading"
               className="mt-4 max-w-xl text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground sm:text-[40px]"
             >
-              Get answers from your own documents.
+              Retrieval-augmented generation
             </h1>
             <p className="mt-4 max-w-xl text-base leading-7 text-muted sm:text-lg sm:leading-8">
               Upload PDF or text files, then ask questions. Answers come only

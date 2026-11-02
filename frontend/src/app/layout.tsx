@@ -6,7 +6,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "RAG Chatbot",
-  description: "Document-grounded AI chat, coming together piece by piece.",
+  description:
+    "Upload PDF or text files and get answers from your own documents, with the passages shown.",
 };
 
 const THEME_INIT_SCRIPT = `(function(){try{var theme=localStorage.getItem("${THEME_STORAGE_KEY}");if(theme==="light"||theme==="dark"){document.documentElement.setAttribute("data-theme",theme)}else{document.documentElement.removeAttribute("data-theme")}}catch(e){}})();`;

@@ -29,6 +29,7 @@ import {
 } from "@/lib/api";
 import { streamChat, type ChatSource } from "@/lib/chat";
 import { ConversationsPanel } from "@/components/conversations-panel";
+import { Logo } from "@/components/logo";
 
 const MAX_QUESTION_CHARS = 2000;
 const COUNTER_THRESHOLD = 1800;
@@ -951,12 +952,7 @@ function ChatWorkspace() {
           <div className="mx-auto max-w-3xl space-y-5">
             {isEmptyNewChat ? (
               <div className="animate-appear flex flex-col items-center justify-center pb-10 pt-8 text-center sm:pt-14">
-                <span
-                  aria-hidden="true"
-                  className="flex h-14 w-14 items-center justify-center rounded-[20px] bg-accent text-2xl text-white shadow-card"
-                >
-                  ✦
-                </span>
+                <Logo size={56} className="shadow-card" />
                 <h2 className="mt-5 max-w-xl text-[26px] font-semibold leading-tight tracking-tight text-foreground sm:text-2xl">
                   Hey — ask anything about your documents
                 </h2>

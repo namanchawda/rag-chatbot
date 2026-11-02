@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth";
 import { Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AdminServiceIndicator } from "@/components/admin-services";
+import { Logo } from "@/components/logo";
 
 type NavItem = {
   label: string;
@@ -93,12 +94,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <header className="z-10 shrink-0 border-b border-card-border bg-card backdrop-blur-2xl">
         <div className="relative flex h-16 items-center justify-between px-4 sm:px-6">
           <div className="flex items-center gap-2.5">
-            <span
-              aria-hidden="true"
-              className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-accent text-sm text-white"
-            >
-              ✦
-            </span>
+            <Logo size={32} />
             <span className="text-[15px] font-semibold tracking-tight">
               RAG Chatbot
             </span>

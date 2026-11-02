@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 import { Field, PasswordField, PrimaryButton, Splash } from "@/components/ui";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Logo } from "@/components/logo";
 
 type Mode = "signin" | "create";
 type Step = "auth" | "verify" | "forgot-email" | "forgot-reset" | "forgot-done";
@@ -409,14 +410,9 @@ export default function LoginPage() {
     confirmation.length > 0 && password !== confirmation;
 
   return (
-    <main className="relative flex min-h-screen items-center bg-background px-5 py-14 sm:px-8 sm:py-20 lg:px-12 lg:py-12">
+    <main className="relative flex min-h-screen items-center bg-background px-5 pb-14 pt-24 sm:px-8 sm:pb-20 sm:pt-28 lg:px-12 lg:pb-12 lg:pt-28">
       <div className="absolute left-5 top-5 flex items-center gap-2.5 sm:left-8 sm:top-8 lg:left-12">
-        <span
-          aria-hidden="true"
-          className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-lg text-white"
-        >
-          ✦
-        </span>
+        <Logo size={36} />
         <span className="text-base font-semibold tracking-tight text-foreground">
           RAG Chatbot
         </span>
@@ -429,18 +425,16 @@ export default function LoginPage() {
         >
           <div className="max-w-xl">
             <p className="text-sm font-semibold uppercase tracking-[0.14em] text-accent">
-              Ask your documents
+              Retrieval-augmented generation
             </p>
             <h1
               id="login-welcome"
               className="mt-4 text-[34px] font-semibold leading-[1.08] tracking-[-0.04em] text-foreground lg:text-[40px]"
             >
-              Get answers from your own documents.
+              Answers grounded in your documents, not guessed.
             </h1>
             <p className="mt-4 max-w-lg text-base leading-7 text-muted lg:text-lg lg:leading-8">
-              Upload PDF or text files, then ask questions in plain language.
-              Answers come only from what you uploaded, and each one shows the
-              passages it’s based on, so you can check it.
+              A RAG pipeline you can control. Upload PDF or text files, choose how they're split into passages, and every answer is generated only from the passages retrieved for your question, with the sources shown.
             </p>
             <ol className="mt-8 max-w-lg space-y-4">
               <li className="flex items-start gap-3.5">
@@ -452,10 +446,10 @@ export default function LoginPage() {
                 </span>
                 <span>
                   <span className="block text-[15px] font-semibold text-foreground">
-                    Upload
+                    Chunk
                   </span>
                   <span className="mt-0.5 block text-sm leading-6 text-muted">
-                    Add PDF or TXT files and choose how they’re split.
+                    Choose a strategy (recursive, fixed size, sentence or paragraph) and set the size and overlap.
                   </span>
                 </span>
               </li>
@@ -468,10 +462,10 @@ export default function LoginPage() {
                 </span>
                 <span>
                   <span className="block text-[15px] font-semibold text-foreground">
-                    Ask
+                    Retrieve
                   </span>
                   <span className="mt-0.5 block text-sm leading-6 text-muted">
-                    Question your library in plain language.
+                    Your question is embedded and matched against your passages in pgvector, with optional reranking to drop weak matches.
                   </span>
                 </span>
               </li>
@@ -484,10 +478,10 @@ export default function LoginPage() {
                 </span>
                 <span>
                   <span className="block text-[15px] font-semibold text-foreground">
-                    Check
+                    Generate
                   </span>
                   <span className="mt-0.5 block text-sm leading-6 text-muted">
-                    See the exact passages behind every answer.
+                    The LLM answers only from the retrieved passages, and shows each one so you can verify it.
                   </span>
                 </span>
               </li>
@@ -500,12 +494,7 @@ export default function LoginPage() {
           className="mx-auto w-full max-w-md rounded-[28px] border border-card-border bg-card p-6 shadow-card backdrop-blur-2xl sm:p-8 lg:p-9"
         >
           <div className="mb-7 text-center sm:mb-8">
-            <span
-              className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-accent text-2xl text-white shadow-sm sm:hidden"
-              aria-hidden="true"
-            >
-              ✦
-            </span>
+            <Logo size={48} className="mx-auto mb-4 block shadow-sm sm:hidden" />
             <h2
               id="auth-heading"
               tabIndex={-1}

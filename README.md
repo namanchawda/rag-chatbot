@@ -1,6 +1,7 @@
 # RAG Chatbot
+<p align="center"><img src="docs/logo.png" width="96" alt="RAG Chatbot logo"></p>
 
-Chat with your own documents. Upload PDF or text files, ask questions in plain language, and get answers that come **only** from what you uploaded, with the exact passages shown so you can check them.
+A retrieval-augmented generation (RAG) app with configurable chunking, vector search and optional reranking. Upload PDF or text files, choose how they are split into passages, and get answers that come **only** from what you uploaded, with the exact passages shown so you can check them.
 
 **Live demo:** https://raggg.vercel.app
 
@@ -16,9 +17,11 @@ Add screenshots after you take them, then remove this comment:
 
 ## What it does
 
-1. **Upload** a PDF or TXT file and choose how it is split into passages.
-2. **Ask** a question. The app finds the most relevant passages from your documents only.
-3. **Read** a streamed answer written from those passages, with the sources listed underneath.
+The app walks through the three stages of a RAG pipeline, and you control the first one.
+
+1. **Chunk:** upload a PDF or TXT file and choose a chunking strategy (recursive, fixed size, sentence-aware or paragraph-based) with your own size and overlap. The passages are embedded and stored in pgvector.
+2. **Retrieve:** your question is embedded and matched against your passages only. Optional reranking re-scores the candidates and drops weak matches.
+3. **Generate:** a streamed answer is written from the retrieved passages, with the sources listed underneath.
 
 If your documents don't contain the answer, the assistant says so instead of guessing.
 
