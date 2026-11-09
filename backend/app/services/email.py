@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
+import base64
+import logging
+import threading
+import time
 from datetime import datetime, timezone
+from email.message import EmailMessage
+from email.utils import formataddr
 
 import httpx
 from sqlalchemy import update
@@ -14,8 +20,12 @@ from ..db import SessionLocal
 from ..models import EmailDailyUsage
 from ..rag.status import SERVICE_EMAIL, record_failure, record_success
 
-BREVO_URL = "https://api.brevo.com/v3/smtp/email"
+GMAIL_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 EMAIL_LIMIT_MESSAGE = "Email delivery is temporarily unavailable. Please try again later."
+
+_token_lock = threading.Lock()
+_token_cache: dict = {"value": None, "expires_at": 0.0}
 
 
 class EmailSendError(RuntimeError):
@@ -72,35 +82,89 @@ def _build_client() -> httpx.Client:
     return httpx.Client(timeout=httpx.Timeout(10.0))
 
 
-def _brevo_send(to: str, subject: str, text: str, html: str) -> None:
+logger = logging.getLogger(__name__)
+
+
+def _google_error(response: httpx.Response) -> str:
+    try:
+        err = response.json().get("error")
+    except ValueError:
+        return "unknown"
+    if isinstance(err, dict):
+        return str(err.get("status") or err.get("code") or "unknown")
+    return str(err or "unknown")
+
+
+def _gmail_access_token(client: httpx.Client, settings, force: bool = False) -> str:
+    with _token_lock:
+        if not force and _token_cache["value"] and time.time() < _token_cache["expires_at"]:
+            return _token_cache["value"]
+        try:
+            response = client.post(
+                GMAIL_TOKEN_URL,
+                data={
+                    "grant_type": "refresh_token",
+                    "client_id": settings.GMAIL_CLIENT_ID,
+                    "client_secret": settings.GMAIL_CLIENT_SECRET,
+                    "refresh_token": settings.GMAIL_REFRESH_TOKEN,
+                },
+            )
+        except httpx.HTTPError:
+            logger.warning("Gmail token refresh failed: network error")
+            raise EmailSendError() from None
+        if not response.is_success:
+            logger.warning(
+                "Gmail token refresh failed (status=%s, error=%s)",
+                response.status_code,
+                _google_error(response),
+            )
+            raise EmailSendError(response.status_code)
+        data = response.json()
+        _token_cache["value"] = data["access_token"]
+        _token_cache["expires_at"] = time.time() + int(data.get("expires_in", 3600)) - 60
+        return _token_cache["value"]
+
+
+def _gmail_send(to: str, subject: str, text: str, html: str) -> None:
     settings = get_settings()
     validate_email_settings(settings)
-    payload = {
-        "sender": {
-            "name": settings.EMAIL_FROM_NAME,
-            "email": settings.EMAIL_FROM_ADDRESS,
-        },
-        "to": [{"email": to}],
-        "subject": subject,
-        "htmlContent": html,
-        "textContent": text,
-    }
+
+    clean = lambda v: v.replace("\r", " ").replace("\n", " ").strip()
+    message = EmailMessage()
+    message["From"] = formataddr((settings.EMAIL_FROM_NAME, settings.GMAIL_USER))
+    message["To"] = clean(to)
+    message["Subject"] = clean(subject)
+    message.set_content(text)
+    if html:
+        message.add_alternative(html, subtype="html")
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
+
     with _build_client() as client:
+        token = _gmail_access_token(client, settings)
         for attempt in range(2):
             try:
                 response = client.post(
-                    BREVO_URL,
-                    headers={"api-key": settings.BREVO_API_KEY},
-                    json=payload,
+                    GMAIL_SEND_URL,
+                    headers={"Authorization": f"Bearer {token}"},
+                    json={"raw": raw},
                 )
             except httpx.HTTPError:
                 if attempt == 0:
                     continue
+                logger.warning("Gmail send failed: network error")
                 raise EmailSendError() from None
             if response.is_success:
                 return
+            if response.status_code == 401 and attempt == 0:
+                token = _gmail_access_token(client, settings, force=True)
+                continue
             if response.status_code >= 500 and attempt == 0:
                 continue
+            logger.warning(
+                "Gmail send failed (status=%s, error=%s)",
+                response.status_code,
+                _google_error(response),
+            )
             raise EmailSendError(response.status_code)
 
 
@@ -114,7 +178,9 @@ def send_email(to: str, subject: str, text: str, html: str) -> None:
         if settings.EMAIL_BACKEND == "console":
             print(f"\n--- Console email to {to} ---\nSubject: {subject}\n{text}\n")
         elif settings.EMAIL_BACKEND == "brevo":
-            _brevo_send(to, subject, text, html)
+            raise EmailSendError()
+        elif settings.EMAIL_BACKEND == "gmail":
+            _gmail_send(to, subject, text, html)
         else:
             raise EmailSendError()
     except EmailSendError as error:

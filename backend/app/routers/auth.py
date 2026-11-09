@@ -128,14 +128,18 @@ def _issue_code(db: Session, user: User, purpose: str) -> bool:
 
     duration = get_settings().CODE_TTL_MINUTES
     verb = "verify your email" if purpose == "verify" else "reset your password"
-    subject = "Verify your email" if purpose == "verify" else "Reset your password"
+    subject = (
+        f"{code} is your Naman Labs verification code"
+        if purpose == "verify"
+        else f"{code} is your Naman Labs password reset code"
+    )
     text = (
-        f"Use this code to {verb}: {code}\n"
+        f"Use this code to {verb} for Naman Labs: {code}\n"
         f"It is valid for {duration} minutes. "
         "If you didn’t request this, you can ignore this email."
     )
     html = (
-        f"<p>Use this code to {verb}:</p><p><strong>{code}</strong></p>"
+        f"<p>Use this code to {verb} for Naman Labs:</p><p><strong>{code}</strong></p>"
         f"<p>It is valid for {duration} minutes. "
         "If you didn’t request this, you can ignore this email.</p>"
     )

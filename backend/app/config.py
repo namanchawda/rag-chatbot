@@ -57,10 +57,14 @@ class Settings(BaseSettings):
     BREVO_API_KEY: str = ""
     EMAIL_FROM_ADDRESS: str = ""
     EMAIL_FROM_NAME: str = "RAG Chatbot"
+    GMAIL_CLIENT_ID: str = ""
+    GMAIL_CLIENT_SECRET: str = ""
+    GMAIL_REFRESH_TOKEN: str = ""
+    GMAIL_USER: str = ""
     CODE_TTL_MINUTES: int = 15
     CODE_MAX_ATTEMPTS: int = 5
     EMAIL_RESEND_COOLDOWN_SECONDS: int = 60
-    MAX_EMAILS_PER_DAY: int = 250
+    MAX_EMAILS_PER_DAY: int = 400
     UNVERIFIED_ACCOUNT_TTL_HOURS: int = 24
 
     model_config = SettingsConfigDict(env_file=BASE_DIR / ".env", extra="ignore")
@@ -69,13 +73,13 @@ class Settings(BaseSettings):
     @classmethod
     def validate_email_backend(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if normalized not in {"console", "brevo"}:
-            raise ValueError("EMAIL_BACKEND must be either 'console' or 'brevo'")
+        if normalized not in {"console", "brevo", "gmail"}:
+            raise ValueError("EMAIL_BACKEND must be either 'console', 'brevo', or 'gmail'")
         return normalized
 
 
 def validate_email_settings(settings: Settings | None = None) -> None:
-    """Fail startup clearly when Brevo is selected without its credentials."""
+    """Fail startup clearly when email backend is selected without its credentials."""
     current = settings or get_settings()
     if current.EMAIL_BACKEND == "brevo":
         missing = []
@@ -86,6 +90,20 @@ def validate_email_settings(settings: Settings | None = None) -> None:
         if missing:
             raise RuntimeError(
                 "EMAIL_BACKEND=brevo requires " + " and ".join(missing) + "."
+            )
+    elif current.EMAIL_BACKEND == "gmail":
+        missing = []
+        if not current.GMAIL_CLIENT_ID.strip():
+            missing.append("GMAIL_CLIENT_ID")
+        if not current.GMAIL_CLIENT_SECRET.strip():
+            missing.append("GMAIL_CLIENT_SECRET")
+        if not current.GMAIL_REFRESH_TOKEN.strip():
+            missing.append("GMAIL_REFRESH_TOKEN")
+        if not current.GMAIL_USER.strip():
+            missing.append("GMAIL_USER")
+        if missing:
+            raise RuntimeError(
+                "EMAIL_BACKEND=gmail requires " + " and ".join(missing) + "."
             )
 
 

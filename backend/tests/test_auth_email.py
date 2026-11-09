@@ -1,3 +1,4 @@
+import base64
 import json
 import re
 from datetime import timedelta
@@ -332,23 +333,29 @@ def test_daily_email_limit_is_a_friendly_signup_503(db_session, monkeypatch):
     assert "access_token" not in response.text
 
 
-def test_brevo_request_retry_and_safe_errors(db_session, monkeypatch):
+def test_gmail_request_retry_and_safe_errors(db_session, monkeypatch):
     settings = get_settings().model_copy(
         update={
-            "EMAIL_BACKEND": "brevo",
-            "BREVO_API_KEY": "brevo-private-key",
-            "EMAIL_FROM_ADDRESS": "sender@example.com",
+            "EMAIL_BACKEND": "gmail",
+            "GMAIL_CLIENT_ID": "client-id",
+            "GMAIL_CLIENT_SECRET": "client-secret",
+            "GMAIL_REFRESH_TOKEN": "refresh-token",
+            "GMAIL_USER": "sender@gmail.com",
             "EMAIL_FROM_NAME": "Test Sender",
         }
     )
     monkeypatch.setattr(email_service, "get_settings", lambda: settings)
     calls = []
+    token_calls = []
 
     def retry_handler(request):
+        if request.url == email_service.GMAIL_TOKEN_URL:
+            token_calls.append(request)
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 3600}, request=request)
         calls.append(request)
         if len(calls) == 1:
             return httpx.Response(503, text="provider body with secret", request=request)
-        return httpx.Response(201, json={"messageId": "fake"}, request=request)
+        return httpx.Response(200, json={}, request=request)
 
     monkeypatch.setattr(
         email_service,
@@ -358,21 +365,22 @@ def test_brevo_request_retry_and_safe_errors(db_session, monkeypatch):
     email_service.send_email(
         "to@example.com", "Hello", "Plain text", "<p>HTML</p>"
     )
+    assert len(token_calls) == 1
     assert len(calls) == 2
     request = calls[1]
-    assert request.url == email_service.BREVO_URL
-    assert request.headers["api-key"] == "brevo-private-key"
-    assert json.loads(request.content) == {
-        "sender": {"name": "Test Sender", "email": "sender@example.com"},
-        "to": [{"email": "to@example.com"}],
-        "subject": "Hello",
-        "htmlContent": "<p>HTML</p>",
-        "textContent": "Plain text",
-    }
+    assert request.url == email_service.GMAIL_SEND_URL
+    assert "Bearer" in request.headers["Authorization"]
+    body = json.loads(request.content)
+    assert "raw" in body
+    assert isinstance(body["raw"], str)
+    # Verify the raw field is a valid base64 string
+    base64.urlsafe_b64decode(body["raw"] + "==")
 
     def failing_handler(request):
+        if request.url == email_service.GMAIL_TOKEN_URL:
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 3600}, request=request)
         return httpx.Response(
-            503, text="brevo-private-key and provider response secret", request=request
+            503, text="client-secret and provider response secret", request=request
         )
 
     monkeypatch.setattr(
@@ -382,12 +390,14 @@ def test_brevo_request_retry_and_safe_errors(db_session, monkeypatch):
     )
     with pytest.raises(EmailSendError) as caught:
         email_service.send_email("to@example.com", "Hello", "Text", "<p>Text</p>")
-    assert "brevo-private-key" not in str(caught.value)
+    assert "client-secret" not in str(caught.value)
     assert "provider response secret" not in str(caught.value)
 
     network_calls = []
 
     def network_retry_handler(request):
+        if request.url == email_service.GMAIL_TOKEN_URL:
+            return httpx.Response(200, json={"access_token": "test-token", "expires_in": 3600}, request=request)
         network_calls.append(request)
         if len(network_calls) == 1:
             raise httpx.ConnectError("network detail with credential", request=request)
@@ -402,13 +412,19 @@ def test_brevo_request_retry_and_safe_errors(db_session, monkeypatch):
     assert len(network_calls) == 2
 
 
-def test_brevo_missing_credentials_fail_during_startup(monkeypatch):
+def test_gmail_missing_credentials_fail_during_startup(monkeypatch):
     original = get_settings()
     incomplete = original.model_copy(
-        update={"EMAIL_BACKEND": "brevo", "BREVO_API_KEY": "", "EMAIL_FROM_ADDRESS": ""}
+        update={
+            "EMAIL_BACKEND": "gmail",
+            "GMAIL_CLIENT_ID": "",
+            "GMAIL_CLIENT_SECRET": "",
+            "GMAIL_REFRESH_TOKEN": "",
+            "GMAIL_USER": "",
+        }
     )
     monkeypatch.setattr(config_module, "get_settings", lambda: incomplete)
-    with pytest.raises(RuntimeError, match="BREVO_API_KEY and EMAIL_FROM_ADDRESS"):
+    with pytest.raises(RuntimeError, match="GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN and GMAIL_USER"):
         with _client():
             pass
 

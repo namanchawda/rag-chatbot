@@ -50,7 +50,7 @@ If your documents don't contain the answer, the assistant says so instead of gue
 | Embeddings | Jina `jina-embeddings-v5-omni-small` (1024 dimensions), via API |
 | Reranking | Jina `jina-reranker-v3.5`, via API |
 | LLM | Groq `openai/gpt-oss-120b` |
-| Email | Brevo transactional email API |
+| Email | Gmail API (OAuth2 refresh token) |
 | Auth | JWT and bcrypt |
 | Hosting | Render (API), Vercel (web) |
 
@@ -81,7 +81,7 @@ backend/
     main.py            FastAPI app, CORS, startup checks, /health, /config
     routers/           auth, documents, chat, sessions, chunks, admin
     rag/               chunking, embeddings, ingest, retrieve, rerank, chat, status
-    services/email.py  Brevo and console email senders
+    services/email.py  Gmail and console email senders
   scripts/             calibrate_rerank.py
   tests/               pytest suite (uses fakes, no external calls)
 frontend/
@@ -92,7 +92,7 @@ frontend/
 
 ## Run it locally
 
-You need Python 3.13, Node.js 20 or newer, a Postgres database with the pgvector extension (a free [Neon](https://neon.tech) project works), a [Jina](https://jina.ai) API key and a [Groq](https://console.groq.com) API key. Brevo is optional locally.
+You need Python 3.13, Node.js 20 or newer, a Postgres database with the pgvector extension (a free [Neon](https://neon.tech) project works), a [Jina](https://jina.ai) API key and a [Groq](https://console.groq.com) API key.
 
 **Backend**
 
@@ -130,7 +130,7 @@ Set these in `backend/.env`. The full list with defaults is in `backend/.env.exa
 | `JWT_SECRET` | Long random string used to sign login tokens |
 | `JINA_API_KEY`, `JINA_EMBEDDING_MODEL`, `EMBEDDING_DIMENSION` | Embeddings and reranking |
 | `GROQ_API_KEY`, `GROQ_MODEL` | Answer generation |
-| `EMAIL_BACKEND`, `BREVO_API_KEY`, `EMAIL_FROM_ADDRESS`, `EMAIL_FROM_NAME` | `console` prints codes locally, `brevo` sends real email |
+| `EMAIL_BACKEND`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, `GMAIL_USER`, `EMAIL_FROM_NAME` | `console` prints codes locally, `gmail` sends real email via Gmail API |
 | `RERANK_ENABLED`, `RERANK_MIN_SCORE`, `RETRIEVAL_CANDIDATES`, `RERANK_TOP_N` | Reranking and how many passages reach the LLM |
 | `MAX_MESSAGES_PER_DAY`, `MAX_DOCUMENTS_PER_USER`, `MAX_TOTAL_CHUNKS_PER_USER`, `MAX_UPLOAD_MB` | Per-user limits |
 | `FRONTEND_ORIGINS`, `TRUST_PROXY`, `SIGNUPS_ENABLED`, `ADMIN_EMAILS` | Hosting and access |
@@ -160,7 +160,7 @@ npm run build
 - **Backend on Render:** root directory `backend`, build command `pip install -r requirements.txt`, start command `uvicorn app.main:app --host 0.0.0.0 --port $PORT`, health check path `/health`. Add the environment variables above, set `TRUST_PROXY=true`, and set `PYTHON_VERSION` to match your local version.
 - **Frontend on Vercel:** root directory `frontend`, with `NEXT_PUBLIC_API_URL` set to your Render address.
 - **Connect them:** set `FRONTEND_ORIGINS` on Render to your exact Vercel address (no trailing slash).
-- Render's free tier blocks outbound SMTP, which is why email goes through Brevo's HTTPS API.
+- Render's free tier blocks outbound SMTP, which is why email goes through the Gmail HTTPS API.
 
 ## API overview
 
@@ -183,7 +183,6 @@ npm run build
 - Each question is answered on its own. Conversations are saved and reloadable, but earlier messages are not sent back to the model, so follow-ups like "and what about its limits?" don't work yet.
 - Scanned PDFs are not supported (there is no OCR).
 - Everything runs on free tiers (Groq, Jina, Neon, Render), which have usage limits. The app caps usage per user and reports service status to admins, but a busy day can still exhaust the free allowances.
-- Mail sent from a free address such as Gmail may land in spam. A domain with its own DNS records fixes that.
 - The first request after Render has been idle takes up to a minute.
 - Login tokens are kept in the browser's local storage, and the login rate limiter is kept in memory, so it resets when the server restarts.
 
